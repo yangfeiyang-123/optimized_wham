@@ -42,11 +42,29 @@ def _validate_contact(wham_contact, expected_shape: tuple[int, int]) -> np.ndarr
     return np.nan_to_num(contact, nan=0.0, posinf=1.0, neginf=0.0)
 
 
+def _validate_fps(fps: float) -> float:
+    fps = float(fps)
+    if not np.isfinite(fps) or fps <= 0.0:
+        raise ValueError(f"fps must be a positive finite value, got {fps!r}")
+    return fps
+
+
+def _validate_min_weighted_samples(min_weighted_samples: int) -> int:
+    value = int(min_weighted_samples)
+    if value < 1:
+        raise ValueError("min_weighted_samples must be a positive integer.")
+    return value
+
+
 def _finite_values(values: np.ndarray) -> np.ndarray:
     return values[np.isfinite(values)]
 
 
 def weighted_median(values: np.ndarray, weights: np.ndarray) -> float:
+    return _weighted_quantile(values, weights, 0.5)
+
+
+def _weighted_quantile(values: np.ndarray, weights: np.ndarray, quantile: float) -> float:
     values = np.asarray(values, dtype=np.float64).reshape(-1)
     weights = np.asarray(weights, dtype=np.float64).reshape(-1)
     if values.shape != weights.shape:
@@ -65,7 +83,7 @@ def weighted_median(values: np.ndarray, weights: np.ndarray) -> float:
     values = values[order]
     weights = weights[order]
     cumulative = np.cumsum(weights)
-    cutoff = 0.5 * float(cumulative[-1])
+    cutoff = float(np.clip(quantile, 0.0, 1.0)) * float(cumulative[-1])
     return float(values[np.searchsorted(cumulative, cutoff, side="left")])
 
 
@@ -93,12 +111,13 @@ def _smooth_confidence(confidence: np.ndarray, smooth_size: int) -> np.ndarray:
     if median_filter is not None:
         return median_filter(confidence, size=(min(smooth_size, len(confidence)), 1), mode="nearest")
 
-    radius = max(1, smooth_size // 2)
-    out = confidence.copy()
+    size = min(int(smooth_size), len(confidence))
+    radius_left = size // 2
+    radius_right = size - radius_left - 1
+    padded = np.pad(confidence, ((radius_left, radius_right), (0, 0)), mode="edge")
+    out = np.empty_like(confidence)
     for idx in range(len(confidence)):
-        lo = max(0, idx - radius)
-        hi = min(len(confidence), idx + radius + 1)
-        out[idx] = np.median(confidence[lo:hi], axis=0)
+        out[idx] = np.median(padded[idx : idx + size], axis=0)
     return out
 
 
@@ -123,6 +142,12 @@ def _initial_weights(foot_points: np.ndarray, fps: float, wham_contact: np.ndarr
     return weights * np.clip(wham_contact, 0.0, 1.0), "wham_contact"
 
 
+def _fallback_ground_from_weights(heights: np.ndarray, weights: np.ndarray) -> float:
+    if int(np.sum(weights > 0.05)) > 0:
+        return _weighted_quantile(heights, weights, 0.2)
+    return _low_percentile_ground(heights)
+
+
 def compute_contact_confidence(
     foot_points: np.ndarray,
     fps: float,
@@ -134,6 +159,9 @@ def compute_contact_confidence(
     smooth_size: int = 5,
 ) -> np.ndarray:
     foot_points = _validate_foot_points(foot_points)
+    fps = _validate_fps(fps)
+    if not np.isfinite(float(ground_y)):
+        raise ValueError(f"ground_y must be finite, got {ground_y!r}")
     wham_contact = _validate_contact(wham_contact, foot_points.shape[:2])
 
     vel = _velocity(foot_points, fps)
@@ -169,17 +197,22 @@ def estimate_ground(
     min_weighted_samples: int = 8,
 ) -> GroundEstimate:
     foot_points = _validate_foot_points(foot_points)
+    fps = _validate_fps(fps)
+    min_weighted_samples = _validate_min_weighted_samples(min_weighted_samples)
     wham_contact = _validate_contact(wham_contact, foot_points.shape[:2])
 
     heights = foot_points[..., 1]
     weights, contact_source = _initial_weights(foot_points, fps, wham_contact)
     active = int(np.sum(weights > 0.05))
-    if wham_contact is None:
-        ground_y = _low_percentile_ground(heights)
-    elif active >= min_weighted_samples:
+    if wham_contact is not None and active > 0:
         ground_y = weighted_median(heights, weights)
+    elif wham_contact is not None and np.any(wham_contact > 0.0):
+        contact_only_weights = np.clip(wham_contact, 0.0, 1.0) * np.isfinite(heights).astype(np.float64)
+        ground_y = weighted_median(heights, contact_only_weights)
+    elif wham_contact is None:
+        ground_y = _fallback_ground_from_weights(heights, weights)
     else:
-        ground_y = _low_percentile_ground(heights)
+        ground_y = _fallback_ground_from_weights(heights, weights)
 
     contact_confidence = compute_contact_confidence(foot_points, fps, ground_y, wham_contact)
     refined_weights = np.maximum(weights, contact_confidence)

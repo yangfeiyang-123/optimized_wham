@@ -1,6 +1,7 @@
 import numpy as np
 import pytest
 
+import lib.world_grounded.ground as ground_module
 from lib.world_grounded.ground import (
     compute_contact_confidence,
     estimate_ground,
@@ -72,12 +73,74 @@ def test_estimate_ground_all_zero_contact_falls_back_to_low_percentile():
     assert result.ground_confidence == "low"
 
 
+def test_estimate_ground_sparse_contact_ignores_non_contact_outlier():
+    foot_points = np.zeros((8, 4, 3), dtype=np.float64)
+    foot_points[..., 1] = 0.15
+    foot_points[0, 0, 1] = 0.0
+    foot_points[0, 3, 1] = -1.0
+    contact = np.zeros((8, 4), dtype=np.float64)
+    contact[0, 0] = 1.0
+
+    result = estimate_ground(foot_points, fps=30.0, wham_contact=contact)
+
+    assert abs(result.ground_y) < 1e-6
+    assert result.ground_confidence == "low"
+
+
+def test_estimate_ground_without_contact_downweights_low_outlier():
+    foot_points = np.zeros((12, 4, 3), dtype=np.float64)
+    foot_points[..., 1] = 0.12
+    foot_points[:, 0, 1] = 0.0
+    foot_points[0, 1, 1] = -0.05
+
+    result = estimate_ground(foot_points, fps=30.0)
+
+    assert abs(result.ground_y) < 0.02
+
+
 def test_estimate_ground_rejects_contact_shape_mismatch():
     foot_points = np.zeros((5, 4, 3), dtype=np.float64)
     contact = np.ones((5, 3), dtype=np.float64)
 
     with pytest.raises(ValueError, match="wham_contact"):
         estimate_ground(foot_points, fps=30.0, wham_contact=contact)
+
+
+@pytest.mark.parametrize("fps", [0.0, -30.0, np.nan, np.inf])
+def test_estimate_ground_rejects_invalid_fps(fps):
+    foot_points = np.zeros((5, 4, 3), dtype=np.float64)
+
+    with pytest.raises(ValueError, match="fps"):
+        estimate_ground(foot_points, fps=fps)
+
+
+@pytest.mark.parametrize("fps", [0.0, -30.0, np.nan, np.inf])
+def test_compute_contact_confidence_rejects_invalid_fps(fps):
+    foot_points = np.zeros((5, 4, 3), dtype=np.float64)
+
+    with pytest.raises(ValueError, match="fps"):
+        compute_contact_confidence(foot_points, fps=fps, ground_y=0.0)
+
+
+def test_estimate_ground_rejects_invalid_min_weighted_samples():
+    foot_points = np.zeros((5, 4, 3), dtype=np.float64)
+
+    with pytest.raises(ValueError, match="min_weighted_samples"):
+        estimate_ground(foot_points, fps=30.0, min_weighted_samples=0)
+
+
+def test_contact_smoothing_fallback_matches_scipy(monkeypatch):
+    if ground_module.median_filter is None:
+        pytest.skip("scipy median_filter is not available")
+
+    foot_points = np.zeros((7, 4, 3), dtype=np.float64)
+    foot_points[0, :, 1] = 0.5
+
+    scipy_conf = compute_contact_confidence(foot_points, fps=30.0, ground_y=0.0, smooth_size=5)
+    monkeypatch.setattr(ground_module, "median_filter", None)
+    fallback_conf = compute_contact_confidence(foot_points, fps=30.0, ground_y=0.0, smooth_size=5)
+
+    assert np.allclose(fallback_conf, scipy_conf)
 
 
 def test_estimate_ground_ignores_nan_and_inf_samples():
