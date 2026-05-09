@@ -14,7 +14,6 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from configs import constants as _C
-from lib.models import build_body_model
 
 
 def to_numpy(value):
@@ -190,6 +189,8 @@ def forward_axis_angle(smpl, pose72, betas, transl=None, device="cpu"):
 
 
 def run_in_chunks(pose72, betas, transl=None, device="cpu", chunk_size=256):
+    from lib.models import build_body_model
+
     pose72 = np.asarray(pose72, dtype=np.float32)
     betas = np.asarray(betas, dtype=np.float32)
     if betas.ndim == 1:
@@ -244,6 +245,24 @@ def beta_variation(betas):
     return float(np.max(np.abs(betas - betas[0:1])))
 
 
+SEQUENCE_FIELDS_TO_TRIM = [
+    "contact",
+    "feet_world",
+    "feet_refined",
+    "feet_cam",
+    "feet_local",
+]
+
+
+def trim_sequence_fields(out_record, n_frames):
+    for key in SEQUENCE_FIELDS_TO_TRIM:
+        if key not in out_record:
+            continue
+        value = to_numpy(out_record[key])
+        if hasattr(value, "__len__") and len(value) >= n_frames:
+            out_record[key] = value[:n_frames].astype(np.float32)
+
+
 def canonicalize_track(record, beta_fixed, device, chunk_size):
     out_record = copy.deepcopy(record)
     if "pose" not in record:
@@ -276,6 +295,7 @@ def canonicalize_track(record, beta_fixed, device, chunk_size):
         out_record["trans_world"] = (old_pelvis - new_pelvis_zero).astype(np.float32)
 
     out_record["betas"] = fixed_betas_seq.astype(np.float32)
+    trim_sequence_fields(out_record, len(pose))
 
     report = {
         "num_frames": int(len(pose)),
