@@ -9,7 +9,6 @@ and can optionally run OpenSim to produce the output coordinate MOT.
 from __future__ import annotations
 
 import argparse
-import copy
 import shutil
 import subprocess
 import sys
@@ -28,6 +27,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from lib.models import build_body_model
+from lib.world_grounded.tracks import select_track
 
 
 SMPL24_INDEX = {
@@ -82,91 +82,6 @@ def to_numpy(value) -> np.ndarray:
     if isinstance(value, torch.Tensor):
         return value.detach().cpu().numpy()
     return np.asarray(value)
-
-
-def track_length(record: dict) -> int:
-    if "frame_ids" in record:
-        return len(record["frame_ids"])
-    if "frame_id" in record:
-        return len(record["frame_id"])
-    if "pose" in record:
-        return len(record["pose"])
-    if "pose_world" in record:
-        return len(record["pose_world"])
-    raise ValueError("Cannot infer track length from WHAM record.")
-
-
-def track_frame_ids(record: dict) -> np.ndarray:
-    if "frame_ids" in record:
-        return np.asarray(record["frame_ids"], dtype=np.int64)
-    if "frame_id" in record:
-        return np.asarray(record["frame_id"], dtype=np.int64)
-    return np.arange(track_length(record), dtype=np.int64)
-
-
-def merge_tracks(results: dict) -> dict:
-    samples: dict[int, tuple[int, object, int]] = {}
-    for key, record in results.items():
-        n = track_length(record)
-        for local_idx, frame_id in enumerate(track_frame_ids(record)):
-            current = samples.get(int(frame_id))
-            candidate = (n, key, local_idx)
-            if current is None or candidate[0] > current[0]:
-                samples[int(frame_id)] = candidate
-
-    if not samples:
-        raise ValueError("No frames found in WHAM output.")
-
-    ordered_frames = sorted(samples)
-    first_key = samples[ordered_frames[0]][1]
-    merged = copy.deepcopy(results[first_key])
-
-    all_keys = set()
-    for _, record in results.items():
-        all_keys.update(record.keys())
-
-    for field in all_keys:
-        first_value = results[first_key].get(field)
-        if first_value is None:
-            continue
-
-        can_merge = True
-        values = []
-        for frame_id in ordered_frames:
-            _, key, local_idx = samples[frame_id]
-            record = results[key]
-            if field not in record:
-                can_merge = False
-                break
-            value = record[field]
-            if not hasattr(value, "__len__") or len(value) != track_length(record):
-                can_merge = False
-                break
-            values.append(to_numpy(value)[local_idx])
-
-        if can_merge:
-            merged[field] = np.stack(values, axis=0)
-
-    merged["frame_ids"] = np.asarray(ordered_frames, dtype=np.int64)
-    merged["frame_id"] = np.asarray(ordered_frames, dtype=np.int64)
-    return merged
-
-
-def select_track(results: dict, track_id: str | None):
-    if track_id == "merge":
-        return "merged", merge_tracks(results)
-    if track_id == "longest":
-        key = max(results.keys(), key=lambda k: track_length(results[k]))
-        return key, results[key]
-    if track_id is None:
-        key = sorted(results.keys(), key=lambda x: str(x))[0]
-        return key, results[key]
-    if track_id in results:
-        return track_id, results[track_id]
-    for key, value in results.items():
-        if str(key) == str(track_id):
-            return key, value
-    raise KeyError(f"Track id {track_id!r} not found. Available: {list(results.keys())}")
 
 
 def expand_betas(betas: np.ndarray, n_frames: int) -> np.ndarray:
