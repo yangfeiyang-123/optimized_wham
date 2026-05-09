@@ -17,6 +17,7 @@ from loguru import logger
 
 from configs.config import get_cfg_defaults
 from lib.data.datasets import CustomDataset
+from lib.utils.video import normalize_video_rotation
 from lib.models import build_network, build_body_model
 from lib.models.preproc.detector import DetectionModel
 from lib.models.preproc.extractor import FeatureExtractor
@@ -28,9 +29,65 @@ except:
     logger.info('DPVO is not properly installed. Only estimate in local coordinates !')
     _run_global = False
 
-def prepare_cfg():
+
+def should_disable_global_slam(cfg):
+    if not _run_global:
+        return True
+
+    if cfg.DEVICE.lower() != 'cuda' or not torch.cuda.is_available():
+        return False
+
+    if os.name != 'nt':
+        return False
+
+    device_props = torch.cuda.get_device_properties('cuda')
+    if device_props.major >= 12:
+        logger.warning(
+            'Disable DPVO global SLAM on Windows for CUDA capability '
+            f'{device_props.major}.{device_props.minor}. '
+            'The bundled DPVO runtime is not stable on this configuration and can '
+            'terminate the interpreter without a Python traceback. '
+            'Falling back to local-only mode.'
+        )
+        return True
+
+    return False
+
+def prepare_cfg(
+        fast=False,
+        pose_backend=None,
+        pose_model=None,
+        detector_ckpt=None,
+        detector_imgsz=None,
+        detector_scale=None,
+        feature_batch_size=None,
+        min_track_frames=None,
+    ):
     cfg = get_cfg_defaults()
     cfg.merge_from_file('configs/yamls/demo.yaml')
+
+    if fast:
+        cfg.FLIP_EVAL = False
+        cfg.PREPROC.DETECTOR_CKPT = 'yolov8n.pt'
+        cfg.PREPROC.DETECTOR_IMGSZ = 512
+        cfg.PREPROC.DETECTOR_SCALE = 0.5
+        cfg.PREPROC.FEATURE_BATCH_SIZE = 64
+
+    if pose_backend is not None:
+        cfg.PREPROC.POSE_BACKEND = pose_backend
+    if pose_model is not None:
+        cfg.PREPROC.POSE_MODEL = pose_model
+    if detector_ckpt is not None:
+        cfg.PREPROC.DETECTOR_CKPT = detector_ckpt
+    if detector_imgsz is not None:
+        cfg.PREPROC.DETECTOR_IMGSZ = int(detector_imgsz)
+    if detector_scale is not None:
+        cfg.PREPROC.DETECTOR_SCALE = float(detector_scale)
+    if feature_batch_size is not None:
+        cfg.PREPROC.FEATURE_BATCH_SIZE = int(feature_batch_size)
+    if min_track_frames is not None:
+        cfg.PREPROC.MIN_TRACK_FRAMES = int(min_track_frames)
+
     return cfg
 
 def load_video(video):
@@ -44,12 +101,45 @@ def load_video(video):
 
 
 class WHAM_API(object):
-    def __init__(self):
-        self.cfg = prepare_cfg()
+    def __init__(
+            self,
+            fast=False,
+            pose_backend=None,
+            pose_model=None,
+            detector_ckpt=None,
+            detector_imgsz=None,
+            detector_scale=None,
+            feature_batch_size=None,
+            min_track_frames=None,
+        ):
+        self.cfg = prepare_cfg(
+            fast=fast,
+            pose_backend=pose_backend,
+            pose_model=pose_model,
+            detector_ckpt=detector_ckpt,
+            detector_imgsz=detector_imgsz,
+            detector_scale=detector_scale,
+            feature_batch_size=feature_batch_size,
+            min_track_frames=min_track_frames,
+        )
+        if self.cfg.DEVICE.lower() == 'cuda' and torch.cuda.is_available():
+            torch.backends.cudnn.benchmark = True
         self.network = build_network(self.cfg, build_body_model(self.cfg.DEVICE, self.cfg.TRAIN.BATCH_SIZE * self.cfg.DATASET.SEQLEN))
         self.network.eval()
-        self.detector = DetectionModel(self.cfg.DEVICE.lower())
-        self.extractor = FeatureExtractor(self.cfg.DEVICE.lower())
+        self.detector = DetectionModel(
+            self.cfg.DEVICE.lower(),
+            bbox_model_ckpt=self.cfg.PREPROC.DETECTOR_CKPT,
+            bbox_imgsz=self.cfg.PREPROC.DETECTOR_IMGSZ,
+            detect_scale=self.cfg.PREPROC.DETECTOR_SCALE,
+            pose_backend=self.cfg.PREPROC.POSE_BACKEND,
+            pose_model_ckpt=self.cfg.PREPROC.POSE_MODEL,
+            min_track_frames=self.cfg.PREPROC.MIN_TRACK_FRAMES,
+        )
+        self.extractor = FeatureExtractor(
+            self.cfg.DEVICE.lower(),
+            self.cfg.FLIP_EVAL,
+            max_batch_size=self.cfg.PREPROC.FEATURE_BATCH_SIZE,
+        )
         self.slam = None
     
     @torch.no_grad()
@@ -118,12 +208,21 @@ class WHAM_API(object):
     
     @torch.no_grad()
     def __call__(self, video, output_dir='output/demo', calib=None, run_global=True, visualize=False):
+        os.makedirs(output_dir, exist_ok=True)
+        original_video = video
+        video = normalize_video_rotation(video, output_dir)
+        if video != original_video:
+            for cached in ('tracking_results.pth', 'slam_results.pth'):
+                p = osp.join(output_dir, cached)
+                if osp.exists(p):
+                    os.remove(p)
+                    logger.info(f'Removed stale cache: {cached}')
+
         # load video information
         cap, fps, length, width, height = load_video(video)
-        os.makedirs(output_dir, exist_ok=True)
 
         # Whether or not estimating motion in global coordinates
-        run_global = run_global and _run_global
+        run_global = run_global and not should_disable_global_slam(self.cfg)
         if run_global: self.slam = SLAMModel(video, output_dir, width, height, calib)
         
         # preprocessing to get detection, tracking, slam results and image features from video input

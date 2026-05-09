@@ -1,3 +1,5 @@
+# python demo.py --video examples/IMG_9732_4s.mp4 --output_pth output/demo --save_pkl --visualize
+
 import os
 import argparse
 import os.path as osp
@@ -14,6 +16,7 @@ from progress.bar import Bar
 from configs.config import get_cfg_defaults
 from lib.data.datasets import CustomDataset
 from lib.utils.imutils import avg_preds
+from lib.utils.video import normalize_video_rotation
 from lib.utils.transforms import matrix_to_axis_angle
 from lib.models import build_network, build_body_model
 from lib.models.preproc.detector import DetectionModel
@@ -26,6 +29,69 @@ try:
 except: 
     logger.info('DPVO is not properly installed. Only estimate in local coordinates !')
     _run_global = False
+
+
+def fix_video_rotation(video_path, output_dir):
+    return normalize_video_rotation(video_path, output_dir)
+
+
+def apply_runtime_overrides(cfg, args):
+    if args.fast:
+        cfg.FLIP_EVAL = False
+        cfg.PREPROC.DETECTOR_CKPT = 'yolov8n.pt'
+        cfg.PREPROC.DETECTOR_IMGSZ = 512
+        cfg.PREPROC.DETECTOR_SCALE = 0.5
+        cfg.PREPROC.FEATURE_BATCH_SIZE = 64
+
+    if args.pose_backend is not None:
+        cfg.PREPROC.POSE_BACKEND = args.pose_backend
+    if args.pose_model is not None:
+        cfg.PREPROC.POSE_MODEL = args.pose_model
+    if args.detector_ckpt is not None:
+        cfg.PREPROC.DETECTOR_CKPT = args.detector_ckpt
+    if args.detector_imgsz is not None:
+        cfg.PREPROC.DETECTOR_IMGSZ = int(args.detector_imgsz)
+    if args.detector_scale is not None:
+        cfg.PREPROC.DETECTOR_SCALE = float(args.detector_scale)
+    if args.feature_batch_size is not None:
+        cfg.PREPROC.FEATURE_BATCH_SIZE = int(args.feature_batch_size)
+    if args.min_track_frames is not None:
+        cfg.PREPROC.MIN_TRACK_FRAMES = int(args.min_track_frames)
+
+    return cfg
+
+
+def should_disable_global_slam(args, cfg):
+    if args.estimate_local_only or not _run_global:
+        return True
+
+    if cfg.DEVICE.lower() != 'cuda' or not torch.cuda.is_available():
+        return False
+
+    if os.name != 'nt':
+        return False
+
+    device_props = torch.cuda.get_device_properties('cuda')
+    if device_props.major >= 12:
+        if args.force_global:
+            logger.warning(
+                'Ignoring --force_global on Windows for CUDA capability '
+                f'{device_props.major}.{device_props.minor}. '
+                'The bundled DPVO runtime is not stable on this configuration and can '
+                'terminate the interpreter without a Python traceback. '
+                'Falling back to local-only mode.'
+            )
+        else:
+            logger.warning(
+                'Disable DPVO global SLAM on Windows for CUDA capability '
+                f'{device_props.major}.{device_props.minor}. '
+                'The bundled DPVO runtime is not stable on this configuration and can '
+                'terminate the interpreter without a Python traceback. '
+                'Falling back to local-only mode.'
+            )
+        return True
+
+    return False
 
 def run(cfg,
         video,
@@ -50,8 +116,20 @@ def run(cfg,
         if not (osp.exists(osp.join(output_pth, 'tracking_results.pth')) and 
                 osp.exists(osp.join(output_pth, 'slam_results.pth'))):
             
-            detector = DetectionModel(cfg.DEVICE.lower())
-            extractor = FeatureExtractor(cfg.DEVICE.lower(), cfg.FLIP_EVAL)
+            detector = DetectionModel(
+                cfg.DEVICE.lower(),
+                bbox_model_ckpt=cfg.PREPROC.DETECTOR_CKPT,
+                bbox_imgsz=cfg.PREPROC.DETECTOR_IMGSZ,
+                detect_scale=cfg.PREPROC.DETECTOR_SCALE,
+                pose_backend=cfg.PREPROC.POSE_BACKEND,
+                pose_model_ckpt=cfg.PREPROC.POSE_MODEL,
+                min_track_frames=cfg.PREPROC.MIN_TRACK_FRAMES,
+            )
+            extractor = FeatureExtractor(
+                cfg.DEVICE.lower(),
+                cfg.FLIP_EVAL,
+                max_batch_size=cfg.PREPROC.FEATURE_BATCH_SIZE,
+            )
             
             if run_global: slam = SLAMModel(video, output_pth, width, height, calib)
             else: slam = None
@@ -191,6 +269,9 @@ if __name__ == '__main__':
 
     parser.add_argument('--estimate_local_only', action='store_true',
                         help='Only estimate motion in camera coordinate if True')
+
+    parser.add_argument('--force_global', action='store_true',
+                        help='Try to force DPVO global SLAM on soft-disabled configurations. Ignored on Windows with CUDA capability 12.x+')
     
     parser.add_argument('--visualize', action='store_true',
                         help='Visualize the output mesh if True')
@@ -201,10 +282,38 @@ if __name__ == '__main__':
     parser.add_argument('--run_smplify', action='store_true',
                         help='Run Temporal SMPLify for post processing')
 
+    parser.add_argument('--fast', action='store_true',
+                        help='Use a speed-oriented preset: disable flip eval, use a lighter YOLO model and run detection on downscaled frames')
+
+    parser.add_argument('--detector-ckpt', type=str, default=None,
+                        help='Detector checkpoint or Ultralytics model name, e.g. yolov8n.pt')
+
+    parser.add_argument('--detector-imgsz', type=int, default=None,
+                        help='Detector inference size passed to YOLO')
+
+    parser.add_argument('--detector-scale', type=float, default=None,
+                        help='Resize factor applied before detection and 2D pose estimation')
+
+    parser.add_argument('--pose-backend', type=str, default=None,
+                        choices=['vitpose', 'rtmpose'],
+                        help='2D pose backend')
+
+    parser.add_argument('--pose-model', type=str, default=None,
+                        help='Pose model identifier or path. For RTMPose, use e.g. rtmpose-m or a local end2end.onnx')
+
+    parser.add_argument('--feature-batch-size', type=int, default=None,
+                        help='Batch size used by the HMR2 feature extractor')
+
+    parser.add_argument('--min-track-frames', type=int, default=None,
+                        help='Minimum number of frames required to keep a tracked subject')
+
     args = parser.parse_args()
 
     cfg = get_cfg_defaults()
     cfg.merge_from_file('configs/yamls/demo.yaml')
+    cfg = apply_runtime_overrides(cfg, args)
+    if cfg.DEVICE.lower() == 'cuda' and torch.cuda.is_available():
+        torch.backends.cudnn.benchmark = True
     
     logger.info(f'GPU name -> {torch.cuda.get_device_name()}')
     logger.info(f'GPU feat -> {torch.cuda.get_device_properties("cuda")}')    
@@ -220,12 +329,24 @@ if __name__ == '__main__':
     output_pth = osp.join(args.output_pth, sequence)
     os.makedirs(output_pth, exist_ok=True)
     
-    run(cfg, 
-        args.video, 
-        output_pth, 
-        network, 
-        args.calib, 
-        run_global=not args.estimate_local_only, 
+    # Fix portrait videos with rotation metadata before any processing
+    video = fix_video_rotation(args.video, output_pth)
+    if video != args.video:
+        # Rotation was applied – cached preprocessing is invalid
+        for cached in ('tracking_results.pth', 'slam_results.pth'):
+            p = osp.join(output_pth, cached)
+            if osp.exists(p):
+                os.remove(p)
+                logger.info(f'Removed stale cache: {cached}')
+
+    disable_global_slam = should_disable_global_slam(args, cfg)
+
+    run(cfg,
+        video,
+        output_pth,
+        network,
+        args.calib,
+        run_global=not disable_global_slam,
         save_pkl=args.save_pkl,
         visualize=args.visualize)
         
