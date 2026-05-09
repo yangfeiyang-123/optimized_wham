@@ -148,9 +148,8 @@ class Network(nn.Module):
         output = self.rollout(output, output['poses_root_r6d_refined'], output['vel_root_refined'], return_y_up)
 
         # ---------  Compute refined feet --------- #
-        if self.training:
-            feet_world, cam_R = self.compute_global_feet(output['poses_root_world'], output['trans_world'])
-            output.update({'feet_refined': feet_world})
+        feet_world, cam_R = self.compute_global_feet(output['poses_root_world'], output['trans_world'])
+        output.update({'feet_refined': feet_world})
 
         return output
         

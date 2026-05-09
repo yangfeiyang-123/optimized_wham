@@ -246,7 +246,9 @@ def run(cfg,
         results[_id]['frame_ids'] = frame_id
         if "contact" in pred:
             results[_id]["contact"] = pred["contact"].detach().cpu().squeeze(0).numpy()
-        if "feet" in pred:
+        if "feet_refined" in pred:
+            results[_id]["feet_world"] = pred["feet_refined"].detach().cpu().squeeze(0).numpy()
+        elif "feet" in pred:
             results[_id]["feet_world"] = pred["feet"].detach().cpu().squeeze(0).numpy()
         if "feet_refined" in pred:
             results[_id]["feet_refined"] = pred["feet_refined"].detach().cpu().squeeze(0).numpy()
