@@ -181,6 +181,12 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Reuse an existing canonical_wham_output.pkl.",
     )
+    parser.add_argument(
+        "--world-grounded",
+        action="store_true",
+        help="Run SMPL-layer ground/contact optimizer before OpenSim retarget.",
+    )
+    parser.add_argument("--world-grounded-out-dir", default=None)
     return parser.parse_args()
 
 
@@ -199,6 +205,11 @@ def main() -> int:
         Path(args.retarget_out_dir).resolve()
         if args.retarget_out_dir
         else default_retarget_out_dir(output_root, wham_dir, sequence)
+    )
+    world_grounded_out = (
+        Path(args.world_grounded_out_dir).resolve()
+        if args.world_grounded_out_dir
+        else output_root / "_world_grounded" / safe_ascii_name(sequence)
     )
 
     if not args.skip_wham:
@@ -270,10 +281,30 @@ def main() -> int:
             f"max variation after canonicalization is {beta_report['pipeline_beta_variation_after_max_abs']}"
         )
 
+    retarget_input_pkl = canonical_pkl
+    if args.world_grounded:
+        wg_cmd = [
+            sys.executable,
+            "scripts/world_grounded_smpl_optimizer.py",
+            "--input-pkl",
+            str(canonical_pkl),
+            "--out-dir",
+            str(world_grounded_out),
+            "--fps",
+            str(args.fps),
+            "--track-id",
+            str(args.track_id),
+            "--device",
+            args.device,
+        ]
+        run(wg_cmd)
+        retarget_input_pkl = world_grounded_out / "optimized_canonical_wham_output.pkl"
+        require_file(retarget_input_pkl, "world-grounded optimized pkl")
+
     retarget_cmd = [
         sys.executable,
         "scripts/retarget_smpl_to_opensim.py",
-        str(canonical_pkl),
+        str(retarget_input_pkl),
         "--config",
         args.retarget_config,
         "--out-dir",
@@ -308,6 +339,9 @@ def main() -> int:
     print(f"raw_wham_pkl: {wham_pkl}")
     print(f"fixed_beta_pkl: {canonical_pkl}")
     print(f"fixed_beta_report: {fixed_beta_report}")
+    if args.world_grounded:
+        print(f"world_grounded_dir: {world_grounded_out}")
+        print(f"optimized_fixed_beta_pkl: {retarget_input_pkl}")
     print(f"retarget_dir: {retarget_out}")
     print(f"opensim_motion: {retarget_out / 'opensim_ik.mot'}")
     print(
