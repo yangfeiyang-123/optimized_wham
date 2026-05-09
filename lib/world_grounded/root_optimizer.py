@@ -4,11 +4,6 @@ from dataclasses import dataclass
 
 import numpy as np
 
-try:
-    from scipy.signal import savgol_filter
-except Exception:  # pragma: no cover - scipy is available in the target env.
-    savgol_filter = None
-
 
 @dataclass
 class RootOptimizationResult:
@@ -26,8 +21,6 @@ def _safe_savgol(values: np.ndarray, window: int = 9, polyorder: int = 2) -> np.
         return values.copy()
     if win % 2 == 0:
         win -= 1
-    if savgol_filter is not None:
-        return savgol_filter(values, window_length=win, polyorder=polyorder, axis=0, mode="interp")
     return _moving_average(values, win)
 
 
