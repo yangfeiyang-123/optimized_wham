@@ -244,6 +244,12 @@ def run(cfg,
         results[_id]['betas'] = pred['betas'].cpu().squeeze(0).numpy()
         results[_id]['verts'] = (pred['verts_cam'] + pred['trans_cam'].unsqueeze(1)).cpu().numpy()
         results[_id]['frame_ids'] = frame_id
+        if "contact" in pred:
+            results[_id]["contact"] = pred["contact"].detach().cpu().squeeze(0).numpy()
+        if "feet" in pred:
+            results[_id]["feet_world"] = pred["feet"].detach().cpu().squeeze(0).numpy()
+        if "feet_refined" in pred:
+            results[_id]["feet_refined"] = pred["feet_refined"].detach().cpu().squeeze(0).numpy()
     
     if save_pkl:
         joblib.dump(results, osp.join(output_pth, "wham_output.pkl"))
