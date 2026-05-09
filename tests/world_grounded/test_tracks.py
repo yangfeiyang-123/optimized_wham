@@ -99,6 +99,30 @@ def test_merge_tracks_ignores_unknown_matching_length_arrays():
     assert "scores" not in merged
 
 
+def test_merge_tracks_preserves_contact_and_feet_fields():
+    results = {
+        0: {
+            "frame_ids": np.arange(0, 2),
+            "pose": np.zeros((2, 72), dtype=np.float32),
+            "contact": np.zeros((2, 4), dtype=np.float32),
+            "feet_refined": np.zeros((2, 4, 3), dtype=np.float32),
+        },
+        1: {
+            "frame_ids": np.arange(2, 4),
+            "pose": np.ones((2, 72), dtype=np.float32),
+            "contact": np.ones((2, 4), dtype=np.float32),
+            "feet_refined": np.ones((2, 4, 3), dtype=np.float32),
+        },
+    }
+
+    merged = merge_tracks(results)
+
+    assert merged["contact"].shape == (4, 4)
+    assert merged["feet_refined"].shape == (4, 4, 3)
+    assert np.allclose(merged["contact"][:2], 0.0)
+    assert np.allclose(merged["contact"][2:], 1.0)
+
+
 def test_select_track_supports_stringified_int_lookup():
     results = {
         1: {"frame_ids": np.arange(2), "pose": np.zeros((2, 72))},

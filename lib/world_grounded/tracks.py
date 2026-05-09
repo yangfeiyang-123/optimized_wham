@@ -6,6 +6,12 @@ from typing import Any
 import numpy as np
 
 PER_FRAME_FIELDS = {
+    "contact",
+    "feet",
+    "feet_cam",
+    "feet_local",
+    "feet_refined",
+    "feet_world",
     "pose",
     "pose_world",
     "trans",
