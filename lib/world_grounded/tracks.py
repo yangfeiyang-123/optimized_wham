@@ -1,10 +1,19 @@
 from __future__ import annotations
 
-import copy
 from collections.abc import Mapping
 from typing import Any
 
 import numpy as np
+
+PER_FRAME_FIELDS = {
+    "pose",
+    "pose_world",
+    "trans",
+    "trans_world",
+    "verts",
+    "joints",
+    "joints_world",
+}
 
 
 def to_numpy(value: Any) -> np.ndarray:
@@ -38,7 +47,9 @@ def _has_track_length(value: Any, n_frames: int) -> bool:
     return array.ndim > 0 and array.shape[0] == n_frames
 
 
-def merge_tracks(results: Mapping[Any, Mapping[str, Any]]) -> dict[str, Any]:
+def _selected_samples(
+    results: Mapping[Any, Mapping[str, Any]],
+) -> tuple[list[int], dict[int, tuple[int, Any, int]]]:
     samples: dict[int, tuple[int, Any, int]] = {}
     for key, record in results.items():
         n_frames = track_length(record)
@@ -52,28 +63,62 @@ def merge_tracks(results: Mapping[Any, Mapping[str, Any]]) -> dict[str, Any]:
     if not samples:
         raise ValueError("No frames found in WHAM output.")
 
-    ordered_frames = sorted(samples)
-    first_key = samples[ordered_frames[0]][1]
-    merged = copy.deepcopy(dict(results[first_key]))
+    return sorted(samples), samples
 
-    all_fields: set[str] = set()
-    for record in results.values():
-        all_fields.update(record.keys())
 
-    for field in all_fields:
-        values = []
-        for frame_id in ordered_frames:
-            _, key, local_idx = samples[frame_id]
-            record = results[key]
-            if field not in record:
-                break
+def _merge_per_frame_field(
+    field: str,
+    ordered_frames: list[int],
+    samples: Mapping[int, tuple[int, Any, int]],
+    results: Mapping[Any, Mapping[str, Any]],
+) -> np.ndarray | None:
+    values = []
+    for frame_id in ordered_frames:
+        _, key, local_idx = samples[frame_id]
+        record = results[key]
+        if field not in record:
+            return None
+        value = record[field]
+        if not _has_track_length(value, track_length(record)):
+            return None
+        values.append(to_numpy(value)[local_idx])
+    return np.stack(values, axis=0)
 
-            value = record[field]
-            if not _has_track_length(value, track_length(record)):
-                break
-            values.append(to_numpy(value)[local_idx])
+
+def _merge_betas(
+    ordered_frames: list[int],
+    samples: Mapping[int, tuple[int, Any, int]],
+    results: Mapping[Any, Mapping[str, Any]],
+) -> np.ndarray | None:
+    values = []
+    for frame_id in ordered_frames:
+        _, key, local_idx = samples[frame_id]
+        record = results[key]
+        if "betas" not in record:
+            return None
+
+        betas = to_numpy(record["betas"])
+        if betas.ndim == 1:
+            values.append(betas.copy())
+        elif betas.ndim == 2 and betas.shape[0] == track_length(record):
+            values.append(betas[local_idx])
         else:
-            merged[field] = np.stack(values, axis=0)
+            return None
+    return np.stack(values, axis=0)
+
+
+def merge_tracks(results: Mapping[Any, Mapping[str, Any]]) -> dict[str, Any]:
+    ordered_frames, samples = _selected_samples(results)
+    merged: dict[str, Any] = {}
+
+    for field in PER_FRAME_FIELDS:
+        value = _merge_per_frame_field(field, ordered_frames, samples, results)
+        if value is not None:
+            merged[field] = value
+
+    betas = _merge_betas(ordered_frames, samples, results)
+    if betas is not None:
+        merged["betas"] = betas
 
     merged["frame_ids"] = np.asarray(ordered_frames, dtype=np.int64)
     merged["frame_id"] = np.asarray(ordered_frames, dtype=np.int64)
@@ -81,11 +126,6 @@ def merge_tracks(results: Mapping[Any, Mapping[str, Any]]) -> dict[str, Any]:
 
 
 def select_track(results: Mapping[Any, Mapping[str, Any]], track_id: str | None = "merge"):
-    if track_id == "merge":
-        return "merged", merge_tracks(results)
-    if track_id == "longest":
-        key = max(results.keys(), key=lambda k: track_length(results[k]))
-        return key, results[key]
     if track_id is None:
         key = sorted(results.keys(), key=lambda x: str(x))[0]
         return key, results[key]
@@ -94,4 +134,9 @@ def select_track(results: Mapping[Any, Mapping[str, Any]], track_id: str | None 
     for key, record in results.items():
         if str(key) == str(track_id):
             return key, record
+    if track_id == "merge":
+        return "merged", merge_tracks(results)
+    if track_id == "longest":
+        key = max(results.keys(), key=lambda k: track_length(results[k]))
+        return key, results[key]
     raise KeyError(f"Track id {track_id!r} not found. Available: {list(results.keys())}")

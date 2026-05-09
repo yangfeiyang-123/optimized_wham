@@ -27,7 +27,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from lib.models import build_body_model
-from lib.world_grounded.tracks import select_track
+from lib.world_grounded.tracks import select_track, to_numpy
 
 
 SMPL24_INDEX = {
@@ -76,12 +76,6 @@ def axis_rotation(mapping_file: Path, mode: str) -> np.ndarray:
     if mode == "mujoco_to_opensim":
         return r_os_to_mj.T
     raise ValueError(f"Unsupported axis conversion: {mode}")
-
-
-def to_numpy(value) -> np.ndarray:
-    if isinstance(value, torch.Tensor):
-        return value.detach().cpu().numpy()
-    return np.asarray(value)
 
 
 def expand_betas(betas: np.ndarray, n_frames: int) -> np.ndarray:
