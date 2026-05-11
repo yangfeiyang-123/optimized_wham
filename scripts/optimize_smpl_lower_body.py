@@ -23,6 +23,9 @@ def parse_args():
     parser.add_argument("--track-id", default="merge")
     parser.add_argument("--ground-y", type=float, default=0.0)
     parser.add_argument("--max-root-y-shift", type=float, default=0.25)
+    parser.add_argument("--device", default="cuda")
+    parser.add_argument("--enable-pose-pass", action="store_true")
+    parser.add_argument("--pose-iterations", type=int, default=80)
     return parser.parse_args()
 
 
@@ -40,6 +43,9 @@ def main() -> int:
             fps=args.fps,
             ground_y=args.ground_y,
             max_root_y_shift=args.max_root_y_shift,
+            enable_pose_pass=args.enable_pose_pass,
+            pose_iterations=args.pose_iterations,
+            device=args.device,
         ),
     )
 

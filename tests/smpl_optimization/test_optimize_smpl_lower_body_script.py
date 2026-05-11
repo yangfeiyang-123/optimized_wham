@@ -5,6 +5,9 @@ from pathlib import Path
 
 import joblib
 import numpy as np
+import pytest
+
+import scripts.optimize_smpl_lower_body as lower_body_script
 
 
 def test_optimize_smpl_lower_body_script_writes_outputs(tmp_path):
@@ -52,3 +55,34 @@ def test_optimize_smpl_lower_body_script_writes_outputs(tmp_path):
 
     validation_summary = json.loads((out_dir / "validation_summary.json").read_text(encoding="utf-8"))
     assert validation_summary["success"] is True
+
+
+def test_optimize_smpl_lower_body_script_accepts_pipeline_cli_options(monkeypatch):
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "optimize_smpl_lower_body.py",
+            "--input-pkl",
+            "input.pkl",
+            "--out-dir",
+            "out",
+            "--fps",
+            "30",
+            "--track-id",
+            "0",
+            "--max-root-y-shift",
+            "0.1",
+            "--device",
+            "cpu",
+            "--enable-pose-pass",
+            "--pose-iterations",
+            "1",
+        ],
+    )
+
+    args = lower_body_script.parse_args()
+
+    assert args.max_root_y_shift == pytest.approx(0.1)
+    assert args.device == "cpu"
+    assert args.enable_pose_pass is True
+    assert args.pose_iterations == 1

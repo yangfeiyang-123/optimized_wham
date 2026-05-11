@@ -187,6 +187,15 @@ def parse_args() -> argparse.Namespace:
         help="Run SMPL-layer ground/contact optimizer before OpenSim retarget.",
     )
     parser.add_argument("--world-grounded-out-dir", default=None)
+    parser.add_argument(
+        "--optimize-lower-body",
+        action="store_true",
+        help="Run lower-body SMPL optimizer before OpenSim retarget.",
+    )
+    parser.add_argument("--lower-body-out-dir", default=None)
+    parser.add_argument("--lower-body-max-root-y-shift", type=float, default=0.25)
+    parser.add_argument("--disable-lower-body-pose-pass", action="store_true")
+    parser.add_argument("--lower-body-pose-iterations", type=int, default=80)
     return parser.parse_args()
 
 
@@ -210,6 +219,11 @@ def main() -> int:
         Path(args.world_grounded_out_dir).resolve()
         if args.world_grounded_out_dir
         else output_root / "_world_grounded" / safe_ascii_name(sequence)
+    )
+    lower_body_out = (
+        Path(args.lower_body_out_dir).resolve()
+        if args.lower_body_out_dir
+        else output_root / "_lower_body_optimized" / safe_ascii_name(sequence)
     )
 
     if not args.skip_wham:
@@ -301,6 +315,33 @@ def main() -> int:
         retarget_input_pkl = world_grounded_out / "optimized_canonical_wham_output.pkl"
         require_file(retarget_input_pkl, "world-grounded optimized pkl")
 
+    if args.optimize_lower_body:
+        lb_cmd = [
+            sys.executable,
+            "scripts/optimize_smpl_lower_body.py",
+            "--input-pkl",
+            str(retarget_input_pkl),
+            "--out-dir",
+            str(lower_body_out),
+            "--fps",
+            str(args.fps),
+            "--track-id",
+            str(args.track_id),
+            "--max-root-y-shift",
+            str(args.lower_body_max_root_y_shift),
+            "--device",
+            args.device,
+        ]
+        if not args.disable_lower_body_pose_pass:
+            lb_cmd += [
+                "--enable-pose-pass",
+                "--pose-iterations",
+                str(args.lower_body_pose_iterations),
+            ]
+        run(lb_cmd)
+        retarget_input_pkl = lower_body_out / "corrected_smpl.pkl"
+        require_file(retarget_input_pkl, "lower-body corrected SMPL pkl")
+
     retarget_cmd = [
         sys.executable,
         "scripts/retarget_smpl_to_opensim.py",
@@ -341,7 +382,12 @@ def main() -> int:
     print(f"fixed_beta_report: {fixed_beta_report}")
     if args.world_grounded:
         print(f"world_grounded_dir: {world_grounded_out}")
-        print(f"optimized_fixed_beta_pkl: {retarget_input_pkl}")
+        print(
+            f"optimized_fixed_beta_pkl: {world_grounded_out / 'optimized_canonical_wham_output.pkl'}"
+        )
+    if args.optimize_lower_body:
+        print(f"lower_body_optimized_dir: {lower_body_out}")
+        print(f"corrected_smpl_pkl: {retarget_input_pkl}")
     print(f"retarget_dir: {retarget_out}")
     print(f"opensim_motion: {retarget_out / 'opensim_ik.mot'}")
     print(
