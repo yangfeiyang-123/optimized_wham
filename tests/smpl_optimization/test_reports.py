@@ -8,6 +8,16 @@ def test_to_jsonable_converts_numpy_scalars():
     assert to_jsonable(data) == {"x": 1.5, "items": [2]}
 
 
+def test_to_jsonable_converts_numpy_scalar_dict_keys_to_json_strings():
+    import json
+    import numpy as np
+
+    result = to_jsonable({np.int64(1): np.float32(2)})
+
+    assert result == {"1": 2.0}
+    json.dumps(result)
+
+
 def test_validation_summary_marks_success_when_all_thresholds_pass():
     summary = build_validation_summary(
         beta_variation_after_max_abs=0.0,
@@ -19,6 +29,22 @@ def test_validation_summary_marks_success_when_all_thresholds_pass():
     )
     assert summary["success"] is True
     assert summary["checks"]["smpl_foot_penetration_reduced"] is True
+
+
+def test_validation_summary_allows_zero_noop_metrics():
+    summary = build_validation_summary(
+        beta_variation_after_max_abs=0.0,
+        frame_count_unchanged=True,
+        before={"penetration": {"max_penetration": 0.0}, "sliding": {"mean_contact_speed": 0.0}, "root": {"rms_vertical_accel": 0.0}},
+        after={"penetration": {"max_penetration": 0.0}, "sliding": {"mean_contact_speed": 0.0}, "root": {"rms_vertical_accel": 0.0}},
+        pose_delta={"upper_body_max_abs": 0.0, "lower_body_max_abs": 0.0},
+        opensim={"ik_rms_not_worse": True, "ground_clearance_not_worse": True},
+    )
+
+    assert summary["success"] is True
+    assert summary["checks"]["smpl_foot_penetration_reduced"] is True
+    assert summary["checks"]["smpl_contact_foot_sliding_reduced"] is True
+    assert summary["checks"]["root_vertical_jitter_not_worse"] is True
 
 
 def test_validation_summary_marks_degraded_when_beta_changes():

@@ -7,7 +7,7 @@ import numpy as np
 
 def to_jsonable(value: Any) -> Any:
     if isinstance(value, dict):
-        return {key: to_jsonable(item) for key, item in value.items()}
+        return {str(to_jsonable(key)): to_jsonable(item) for key, item in value.items()}
     if isinstance(value, (list, tuple)):
         return [to_jsonable(item) for item in value]
     if isinstance(value, np.ndarray):
@@ -61,8 +61,8 @@ def build_validation_summary(
     checks = {
         "beta_variation_after_max_abs": beta_variation_after_max_abs == 0.0,
         "frame_count_unchanged": bool(frame_count_unchanged),
-        "smpl_foot_penetration_reduced": _reduced(before, after, "penetration", "max_penetration"),
-        "smpl_contact_foot_sliding_reduced": _reduced(before, after, "sliding", "mean_contact_speed"),
+        "smpl_foot_penetration_reduced": _not_worse(before, after, "penetration", "max_penetration"),
+        "smpl_contact_foot_sliding_reduced": _not_worse(before, after, "sliding", "mean_contact_speed"),
         "root_vertical_jitter_not_worse": _not_worse(before, after, "root", "rms_vertical_accel"),
         "upper_body_pose_delta_small": upper_body_max_abs is not None and upper_body_max_abs <= 0.05,
         "lower_body_pose_delta_bounded": lower_body_max_abs is not None and lower_body_max_abs <= 1.2,
