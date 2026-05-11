@@ -118,3 +118,4 @@ def test_optimize_record_marks_opensim_validation_not_run_by_default():
     opensim = reports["validation_summary"]["opensim"]
     assert opensim["status"] == "not_run"
     assert opensim["used_for_success"] is False
+    assert "opensim_ik_rms_not_worse" not in reports["validation_summary"]["checks"]

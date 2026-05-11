@@ -62,6 +62,7 @@ def optimize_record(record: dict, config: LowerBodyOptimizerConfig) -> tuple[dic
     pose_report = {"pose_optimizer_used": False}
     if config.enable_pose_pass:
         out_record, pose_report = optimize_lower_body_pose_smpl(out_record, config)
+        _sync_pose_world_to_pose(out_record)
     _clamp_total_root_y_shift(out_record, original_trans_world, config)
     after_quality = _quality_report(out_record, config)
 
@@ -277,6 +278,7 @@ def optimize_lower_body_pose_smpl(
     final_verts = np.concatenate(verts_chunks, axis=0).astype(np.float32)
 
     out["pose"] = final_pose_np
+    _sync_pose_world_to_pose(out)
     out["trans_world"] = final_trans_np
     out["feet_refined"] = final_feet
     if "feet_world" in record:
@@ -470,6 +472,19 @@ def _fit_frame_weights(frame_weights: np.ndarray, *, n_frames: int) -> np.ndarra
     if rows < n_frames:
         fitted[rows:] = fitted[rows - 1]
     return fitted
+
+
+def _sync_pose_world_to_pose(record: dict) -> None:
+    if "pose" not in record or "pose_world" not in record:
+        return
+
+    pose = np.asarray(record["pose"], dtype=np.float32)
+    pose_world = np.asarray(record["pose_world"], dtype=np.float32)
+    if pose.shape != pose_world.shape:
+        return
+
+    record["pose"] = pose
+    record["pose_world"] = pose.copy()
 
 
 def _root_shift_reason(record: dict, shift: np.ndarray) -> str:

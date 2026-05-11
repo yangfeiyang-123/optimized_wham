@@ -144,6 +144,36 @@ def test_pose_pass_changes_only_lower_body_when_enabled(monkeypatch):
     assert np.isclose(reports["pose_delta_report"]["lower_body_max_abs"], 0.01)
 
 
+def test_pose_pass_updates_pose_world_for_retargeted_pose(monkeypatch):
+    record = {
+        "betas": np.zeros((3, 10), dtype=np.float32),
+        "pose": np.zeros((3, 72), dtype=np.float32),
+        "pose_world": np.zeros((3, 72), dtype=np.float32),
+        "trans_world": np.zeros((3, 3), dtype=np.float32),
+        "feet_refined": np.zeros((3, 1, 3), dtype=np.float32),
+        "contact": np.ones((3, 1), dtype=np.float32),
+    }
+
+    def fake_optimize_pose(record, config, frame_weights=None):
+        out = {key: value.copy() if hasattr(value, "copy") else value for key, value in record.items()}
+        mask = lower_body_pose_mask(out["pose"].shape[1])
+        out["pose"][:, mask] += 0.25
+        return out, {"pose_optimizer_used": True, "iterations": 1, "final_loss": 0.0}
+
+    monkeypatch.setattr("lib.smpl_optimization.lower_body.optimize_lower_body_pose_smpl", fake_optimize_pose)
+
+    out, _ = optimize_record(
+        record,
+        LowerBodyOptimizerConfig(fps=30.0, enable_pose_pass=True, pose_iterations=1, device="cpu"),
+    )
+
+    mask = lower_body_pose_mask(72)
+    np.testing.assert_array_equal(out["pose_world"][:, mask], out["pose"][:, mask])
+    np.testing.assert_array_equal(out["pose_world"][:, ~mask], record["pose_world"][:, ~mask])
+    np.testing.assert_array_equal(out["pose"][:, ~mask], record["pose"][:, ~mask])
+    np.testing.assert_array_equal(out["pose_world"][:, mask], np.full((3, int(mask.sum())), 0.25, dtype=np.float32))
+
+
 def test_pose_pass_cannot_push_total_root_y_shift_past_budget(monkeypatch):
     record = {
         "betas": np.zeros((3, 10), dtype=np.float32),
