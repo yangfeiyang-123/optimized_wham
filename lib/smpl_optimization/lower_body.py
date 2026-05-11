@@ -5,7 +5,14 @@ from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
+import torch
 
+from lib.smpl_optimization.losses import (
+    contact_ground_loss,
+    foot_lock_loss,
+    penetration_loss,
+    smoothness_loss,
+)
 from lib.smpl_optimization.metrics import (
     beta_variation_max_abs,
     contact_foot_sliding,
@@ -14,7 +21,11 @@ from lib.smpl_optimization.metrics import (
     root_vertical_jitter,
 )
 from lib.smpl_optimization.reports import build_validation_summary, to_jsonable
+from lib.smpl_optimization.smpl_forward import expand_betas, smpl_forward_axis_angle
 from lib.world_grounded.foot_points import get_record_contact, get_record_foot_points
+
+
+LOWER_BODY_SMPL_JOINTS = (1, 2, 4, 5, 7, 8, 10, 11)
 
 
 @dataclass
@@ -24,6 +35,18 @@ class LowerBodyOptimizerConfig:
     max_root_y_shift: float = 0.25
     foot_clearance: float = 0.0
     sliding_threshold: float = 0.15
+    enable_pose_pass: bool = False
+    pose_iterations: int = 80
+    pose_lr: float = 0.03
+    device: str = "cuda"
+    chunk_size: int = 256
+    w_contact_ground: float = 20.0
+    w_penetration: float = 50.0
+    w_foot_lock: float = 5.0
+    w_pose_smooth: float = 2.0
+    w_root_smooth: float = 5.0
+    w_wham_prior: float = 2.0
+    w_root_prior: float = 20.0
 
 
 _SHIFTED_3D_SEQUENCE_KEYS = ("verts", "feet_world", "feet_refined", "feet")
@@ -35,6 +58,9 @@ def optimize_record(record: dict, config: LowerBodyOptimizerConfig) -> tuple[dic
     before_quality = _quality_report(record, config)
     shift = _compute_frame_y_shift(record, config)
     _apply_frame_y_shift(out_record, shift)
+    pose_report = {"pose_optimizer_used": False}
+    if config.enable_pose_pass:
+        out_record, pose_report = optimize_lower_body_pose_smpl(out_record, config)
     after_quality = _quality_report(out_record, config)
 
     pose_delta_report = _pose_delta_report(record, out_record)
@@ -57,6 +83,7 @@ def optimize_record(record: dict, config: LowerBodyOptimizerConfig) -> tuple[dic
         "root_shift_reason": _root_shift_reason(record, shift),
         "before": before_quality,
         "after": after_quality,
+        **pose_report,
     }
 
     ground_contact_report = {
@@ -90,6 +117,143 @@ def optimize_record(record: dict, config: LowerBodyOptimizerConfig) -> tuple[dic
         "validation_summary": validation_summary,
     }
     return out_record, to_jsonable(reports)
+
+
+def lower_body_pose_mask(num_pose_dims: int = 72) -> np.ndarray:
+    mask = np.zeros((num_pose_dims,), dtype=bool)
+    for joint in LOWER_BODY_SMPL_JOINTS:
+        start = joint * 3
+        if start + 3 <= num_pose_dims:
+            mask[start : start + 3] = True
+    return mask
+
+
+def _contact_for_feet(record: dict, n_frames: int, n_feet: int) -> np.ndarray:
+    contact = get_record_contact(record, n_frames=n_frames, n_points=n_feet)
+    if contact is None:
+        return np.zeros((n_frames, n_feet), dtype=np.float32)
+    return _fit_contact_shape(contact, n_frames=n_frames, n_points=n_feet)
+
+
+def optimize_lower_body_pose_smpl(
+    record: dict,
+    config: LowerBodyOptimizerConfig,
+    frame_weights: np.ndarray | None = None,
+) -> tuple[dict, dict]:
+    from lib.models import build_body_model
+
+    if "pose" not in record or "betas" not in record or "trans_world" not in record:
+        return copy.deepcopy(record), {
+            "pose_optimizer_used": False,
+            "reason": "missing_pose_betas_or_trans_world",
+        }
+
+    out = copy.deepcopy(record)
+    pose_np = np.asarray(record["pose"], dtype=np.float32)
+    if pose_np.ndim != 2 or len(pose_np) == 0:
+        return out, {"pose_optimizer_used": False, "reason": "empty_sequence"}
+
+    n_frames = int(pose_np.shape[0])
+    trans_np = np.asarray(record["trans_world"], dtype=np.float32)
+    if trans_np.ndim != 2 or trans_np.shape[1] < 3 or trans_np.shape[0] == 0:
+        return out, {
+            "pose_optimizer_used": False,
+            "reason": "missing_pose_betas_or_trans_world",
+        }
+
+    trans_np = _fit_2d_sequence(trans_np[:, :3], n_frames=n_frames, n_cols=3)
+    betas_np = expand_betas(record["betas"], n_frames)
+    betas_np = _fit_2d_sequence(betas_np, n_frames=n_frames, n_cols=10)
+
+    requested_device = str(config.device)
+    if requested_device.startswith("cuda") and not torch.cuda.is_available():
+        requested_device = "cpu"
+    device = torch.device(requested_device)
+
+    pose_base = torch.tensor(pose_np, dtype=torch.float32, device=device)
+    trans_base = torch.tensor(trans_np, dtype=torch.float32, device=device)
+    betas = torch.tensor(betas_np, dtype=torch.float32, device=device)
+    pose_mask_np = lower_body_pose_mask(pose_np.shape[1])
+    pose_mask = torch.tensor(pose_mask_np, dtype=torch.bool, device=device)
+
+    pose_residual = torch.zeros_like(pose_base, requires_grad=True)
+    root_residual = torch.zeros_like(trans_base, requires_grad=True)
+    optimizer = torch.optim.Adam([pose_residual, root_residual], lr=float(config.pose_lr))
+    model = build_body_model(str(device), batch_size=n_frames)
+
+    with torch.no_grad():
+        initial = smpl_forward_axis_angle(model, pose_base, betas, trans_base)
+        n_feet = int(initial["feet"].shape[1])
+
+    contact_np = _contact_for_feet(record, n_frames=n_frames, n_feet=n_feet)
+    contact = torch.tensor(contact_np, dtype=torch.float32, device=device)
+    frame_w = torch.ones((n_frames, 1), dtype=torch.float32, device=device)
+    if frame_weights is not None:
+        fitted_weights = _fit_frame_weights(frame_weights, n_frames=n_frames)
+        frame_w = torch.tensor(fitted_weights[:, None], dtype=torch.float32, device=device)
+
+    loss_value = 0.0
+    for _ in range(int(config.pose_iterations)):
+        optimizer.zero_grad()
+        masked_pose = pose_base + pose_residual * pose_mask[None, :]
+        root_y = torch.clamp(
+            root_residual[:, 1],
+            -float(config.max_root_y_shift),
+            float(config.max_root_y_shift),
+        )
+        masked_root = trans_base + torch.stack(
+            [torch.zeros_like(root_y), root_y, torch.zeros_like(root_y)],
+            dim=-1,
+        )
+        smpl = smpl_forward_axis_angle(model, masked_pose, betas, masked_root)
+        foot = smpl["feet"]
+        foot_y = foot[:, :, 1]
+        weighted_contact = contact * frame_w
+        loss = (
+            config.w_contact_ground * contact_ground_loss(foot_y, weighted_contact, config.ground_y)
+            + config.w_penetration * penetration_loss(foot_y, config.ground_y)
+            + config.w_foot_lock * foot_lock_loss(foot, weighted_contact)
+            + config.w_pose_smooth * smoothness_loss(masked_pose[:, pose_mask])
+            + config.w_root_smooth * smoothness_loss(masked_root)
+            + config.w_wham_prior * torch.mean((pose_residual[:, pose_mask]) ** 2)
+            + config.w_root_prior * torch.mean(root_residual * root_residual)
+        )
+        loss.backward()
+        optimizer.step()
+        loss_value = float(loss.detach().cpu())
+
+    with torch.no_grad():
+        final_pose = (pose_base + pose_residual * pose_mask[None, :]).detach().cpu().numpy().astype(np.float32)
+        final_root_residual = root_residual.detach().cpu().numpy().astype(np.float32)
+        final_root_residual[:, 0] = 0.0
+        final_root_residual[:, 2] = 0.0
+        final_root_residual[:, 1] = np.clip(
+            final_root_residual[:, 1],
+            -float(config.max_root_y_shift),
+            float(config.max_root_y_shift),
+        )
+        final_trans = (trans_np + final_root_residual).astype(np.float32)
+        final = smpl_forward_axis_angle(
+            model,
+            torch.tensor(final_pose, dtype=torch.float32, device=device),
+            betas,
+            torch.tensor(final_trans, dtype=torch.float32, device=device),
+        )
+
+    out["pose"] = final_pose
+    out["trans_world"] = final_trans
+    out["feet_refined"] = final["feet"].detach().cpu().numpy().astype(np.float32)
+    out["verts"] = final["vertices"].detach().cpu().numpy().astype(np.float32)
+
+    return out, {
+        "pose_optimizer_used": True,
+        "iterations": int(config.pose_iterations),
+        "final_loss": loss_value,
+        "optimized_pose_dims": np.where(pose_mask_np)[0].tolist(),
+        "root_residual_y_max_abs": (
+            float(np.max(np.abs(final_root_residual[:, 1]))) if len(final_root_residual) else 0.0
+        ),
+    }
 
 
 def _quality_report(record: dict, config: LowerBodyOptimizerConfig) -> dict:
@@ -187,6 +351,33 @@ def _fit_contact_shape(contact: np.ndarray, *, n_frames: int, n_points: int) -> 
     return fitted
 
 
+def _fit_2d_sequence(value: np.ndarray, *, n_frames: int, n_cols: int) -> np.ndarray:
+    fitted = np.zeros((n_frames, n_cols), dtype=np.float32)
+    value = np.asarray(value, dtype=np.float32)
+    if value.ndim != 2 or value.shape[0] == 0 or value.shape[1] == 0:
+        return fitted
+
+    rows = min(n_frames, value.shape[0])
+    cols = min(n_cols, value.shape[1])
+    fitted[:rows, :cols] = value[:rows, :cols]
+    if rows < n_frames:
+        fitted[rows:] = fitted[rows - 1]
+    return fitted
+
+
+def _fit_frame_weights(frame_weights: np.ndarray, *, n_frames: int) -> np.ndarray:
+    fitted = np.ones((n_frames,), dtype=np.float32)
+    weights = np.asarray(frame_weights, dtype=np.float32).reshape(-1)
+    if weights.size == 0:
+        return fitted
+
+    rows = min(n_frames, weights.shape[0])
+    fitted[:rows] = weights[:rows]
+    if rows < n_frames:
+        fitted[rows:] = fitted[rows - 1]
+    return fitted
+
+
 def _root_shift_reason(record: dict, shift: np.ndarray) -> str:
     if "trans_world" not in record:
         return "missing_trans_world"
@@ -199,9 +390,31 @@ def _pose_delta_report(original: dict, optimized: dict) -> dict:
     original_pose = original.get("pose", np.asarray([]))
     optimized_pose = optimized.get("pose", np.asarray([]))
     max_abs = pose_delta_max_abs(original_pose, optimized_pose)
+    original_pose = np.asarray(original_pose)
+    optimized_pose = np.asarray(optimized_pose)
+    upper_max_abs = max_abs
+    lower_max_abs = max_abs
+    if (
+        original_pose.ndim == 2
+        and optimized_pose.ndim == 2
+        and original_pose.shape == optimized_pose.shape
+        and original_pose.shape[1] > 0
+    ):
+        lower_mask = lower_body_pose_mask(original_pose.shape[1])
+        upper_mask = ~lower_mask
+        lower_max_abs = (
+            float(np.max(np.abs(optimized_pose[:, lower_mask] - original_pose[:, lower_mask])))
+            if np.any(lower_mask)
+            else 0.0
+        )
+        upper_max_abs = (
+            float(np.max(np.abs(optimized_pose[:, upper_mask] - original_pose[:, upper_mask])))
+            if np.any(upper_mask)
+            else 0.0
+        )
     return {
-        "upper_body_max_abs": max_abs,
-        "lower_body_max_abs": max_abs,
+        "upper_body_max_abs": upper_max_abs,
+        "lower_body_max_abs": lower_max_abs,
         "total_max_abs": max_abs,
     }
 
