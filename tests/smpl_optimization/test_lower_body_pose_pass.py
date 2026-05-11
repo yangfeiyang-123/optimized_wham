@@ -145,10 +145,12 @@ def test_pose_pass_changes_only_lower_body_when_enabled(monkeypatch):
 
 
 def test_pose_pass_updates_pose_world_for_retargeted_pose(monkeypatch):
+    pose_world = np.tile(np.linspace(1.0, 7.1, 72, dtype=np.float32), (3, 1))
+    pose_world[:, :3] = np.array([[0.7, -0.2, 0.5], [0.8, -0.1, 0.4], [0.9, 0.0, 0.3]], dtype=np.float32)
     record = {
         "betas": np.zeros((3, 10), dtype=np.float32),
         "pose": np.zeros((3, 72), dtype=np.float32),
-        "pose_world": np.zeros((3, 72), dtype=np.float32),
+        "pose_world": pose_world,
         "trans_world": np.zeros((3, 3), dtype=np.float32),
         "feet_refined": np.zeros((3, 1, 3), dtype=np.float32),
         "contact": np.ones((3, 1), dtype=np.float32),
@@ -169,6 +171,7 @@ def test_pose_pass_updates_pose_world_for_retargeted_pose(monkeypatch):
 
     mask = lower_body_pose_mask(72)
     np.testing.assert_array_equal(out["pose_world"][:, mask], out["pose"][:, mask])
+    np.testing.assert_array_equal(out["pose_world"][:, :3], record["pose_world"][:, :3])
     np.testing.assert_array_equal(out["pose_world"][:, ~mask], record["pose_world"][:, ~mask])
     np.testing.assert_array_equal(out["pose"][:, ~mask], record["pose"][:, ~mask])
     np.testing.assert_array_equal(out["pose_world"][:, mask], np.full((3, int(mask.sum())), 0.25, dtype=np.float32))

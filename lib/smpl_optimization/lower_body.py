@@ -478,13 +478,14 @@ def _sync_pose_world_to_pose(record: dict) -> None:
     if "pose" not in record or "pose_world" not in record:
         return
 
-    pose = np.asarray(record["pose"], dtype=np.float32)
-    pose_world = np.asarray(record["pose_world"], dtype=np.float32)
-    if pose.shape != pose_world.shape:
+    pose = np.asarray(record["pose"])
+    pose_world = np.asarray(record["pose_world"]).copy()
+    if pose.ndim != 2 or pose_world.ndim != 2 or pose.shape != pose_world.shape:
         return
 
-    record["pose"] = pose
-    record["pose_world"] = pose.copy()
+    pose_mask = lower_body_pose_mask(pose.shape[1])
+    pose_world[:, pose_mask] = pose[:, pose_mask]
+    record["pose_world"] = pose_world
 
 
 def _root_shift_reason(record: dict, shift: np.ndarray) -> str:
