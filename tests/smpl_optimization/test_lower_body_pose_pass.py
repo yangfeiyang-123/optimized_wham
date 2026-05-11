@@ -1,3 +1,6 @@
+import sys
+import types
+
 import numpy as np
 import torch
 
@@ -5,9 +8,56 @@ from lib.smpl_optimization.lower_body import (
     LOWER_BODY_SMPL_JOINTS,
     LowerBodyOptimizerConfig,
     lower_body_pose_mask,
+    optimize_lower_body_pose_smpl,
     optimize_record,
 )
 from lib.smpl_optimization.smpl_forward import expand_betas, smpl_forward_axis_angle
+
+
+class DifferentiableFakeOutput:
+    def __init__(self, feet):
+        self.feet = feet
+        self.vertices = torch.cat([feet, feet + torch.tensor([0.0, 0.2, 0.0], device=feet.device)], dim=1)
+
+
+class DifferentiableFakeModel:
+    def __init__(self, batch_size):
+        self.batch_size = batch_size
+
+    def get_output(self, **kwargs):
+        transl = kwargs["transl"]
+        body_pose = kwargs["body_pose"]
+        assert transl.shape[0] == self.batch_size
+        assert body_pose.shape[0] == self.batch_size
+        lower_pose_y = body_pose[:, 0]
+        foot_y = transl[:, 1] - 0.2 + 0.5 * lower_pose_y
+        left = torch.stack([transl[:, 0] - 0.1, foot_y, transl[:, 2]], dim=-1)
+        right = torch.stack([transl[:, 0] + 0.1, foot_y, transl[:, 2]], dim=-1)
+        return DifferentiableFakeOutput(torch.stack([left, right], dim=1))
+
+
+def make_pose_optimizer_record(n_frames=4):
+    feet = np.full((n_frames, 2, 3), 0.1, dtype=np.float32)
+    return {
+        "betas": np.tile(np.arange(10, dtype=np.float32), (n_frames, 1)),
+        "pose": np.zeros((n_frames, 72), dtype=np.float32),
+        "trans_world": np.zeros((n_frames, 3), dtype=np.float32),
+        "feet": feet.copy(),
+        "feet_world": feet.copy() + 1.0,
+        "feet_refined": feet.copy() + 2.0,
+        "contact": np.ones((n_frames, 2), dtype=np.float32),
+    }
+
+
+def install_differentiable_fake_model(monkeypatch):
+    batch_sizes = []
+
+    def fake_build_body_model(device, batch_size):
+        batch_sizes.append(batch_size)
+        return DifferentiableFakeModel(batch_size)
+
+    monkeypatch.setitem(sys.modules, "lib.models", types.SimpleNamespace(build_body_model=fake_build_body_model))
+    return batch_sizes
 
 
 def test_lower_body_joint_indices_are_expected_smpl_joints():
@@ -92,3 +142,52 @@ def test_pose_pass_changes_only_lower_body_when_enabled(monkeypatch):
     assert reports["lower_body_optimization_report"]["pose_optimizer_used"] is True
     assert reports["pose_delta_report"]["upper_body_max_abs"] == 0.0
     assert np.isclose(reports["pose_delta_report"]["lower_body_max_abs"], 0.01)
+
+
+def test_pose_optimizer_builds_models_no_larger_than_chunk_size(monkeypatch):
+    batch_sizes = install_differentiable_fake_model(monkeypatch)
+    record = make_pose_optimizer_record(n_frames=5)
+
+    optimize_lower_body_pose_smpl(
+        record,
+        LowerBodyOptimizerConfig(
+            fps=30.0,
+            enable_pose_pass=True,
+            pose_iterations=1,
+            pose_lr=0.01,
+            device="cpu",
+            chunk_size=2,
+        ),
+    )
+
+    assert batch_sizes == [2, 2, 1]
+    assert max(batch_sizes) <= 2
+
+
+def test_real_pose_optimizer_preserves_invariants_and_updates_existing_feet(monkeypatch):
+    install_differentiable_fake_model(monkeypatch)
+    record = make_pose_optimizer_record(n_frames=4)
+    max_root_y_shift = 0.05
+
+    out, reports = optimize_record(
+        record,
+        LowerBodyOptimizerConfig(
+            fps=30.0,
+            enable_pose_pass=True,
+            pose_iterations=2,
+            pose_lr=0.05,
+            device="cpu",
+            chunk_size=2,
+            max_root_y_shift=max_root_y_shift,
+        ),
+    )
+
+    mask = lower_body_pose_mask(out["pose"].shape[1])
+    np.testing.assert_array_equal(out["betas"], record["betas"])
+    np.testing.assert_array_equal(out["pose"][:, ~mask], record["pose"][:, ~mask])
+    np.testing.assert_allclose(out["trans_world"][:, 0], record["trans_world"][:, 0], atol=1e-6)
+    np.testing.assert_allclose(out["trans_world"][:, 2], record["trans_world"][:, 2], atol=1e-6)
+    assert np.max(np.abs(out["trans_world"][:, 1] - record["trans_world"][:, 1])) <= max_root_y_shift + 1e-6
+    assert reports["lower_body_optimization_report"]["pose_optimizer_used"] is True
+    np.testing.assert_array_equal(out["feet"], out["feet_refined"])
+    np.testing.assert_array_equal(out["feet_world"], out["feet_refined"])

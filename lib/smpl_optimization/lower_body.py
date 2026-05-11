@@ -170,89 +170,115 @@ def optimize_lower_body_pose_smpl(
         requested_device = "cpu"
     device = torch.device(requested_device)
 
-    pose_base = torch.tensor(pose_np, dtype=torch.float32, device=device)
-    trans_base = torch.tensor(trans_np, dtype=torch.float32, device=device)
-    betas = torch.tensor(betas_np, dtype=torch.float32, device=device)
     pose_mask_np = lower_body_pose_mask(pose_np.shape[1])
     pose_mask = torch.tensor(pose_mask_np, dtype=torch.bool, device=device)
-
-    pose_residual = torch.zeros_like(pose_base, requires_grad=True)
-    root_residual = torch.zeros_like(trans_base, requires_grad=True)
-    optimizer = torch.optim.Adam([pose_residual, root_residual], lr=float(config.pose_lr))
-    model = build_body_model(str(device), batch_size=n_frames)
-
-    with torch.no_grad():
-        initial = smpl_forward_axis_angle(model, pose_base, betas, trans_base)
-        n_feet = int(initial["feet"].shape[1])
-
-    contact_np = _contact_for_feet(record, n_frames=n_frames, n_feet=n_feet)
-    contact = torch.tensor(contact_np, dtype=torch.float32, device=device)
-    frame_w = torch.ones((n_frames, 1), dtype=torch.float32, device=device)
+    frame_weights_np = np.ones((n_frames,), dtype=np.float32)
     if frame_weights is not None:
-        fitted_weights = _fit_frame_weights(frame_weights, n_frames=n_frames)
-        frame_w = torch.tensor(fitted_weights[:, None], dtype=torch.float32, device=device)
+        frame_weights_np = _fit_frame_weights(frame_weights, n_frames=n_frames)
 
+    final_pose_np = pose_np.copy()
+    final_trans_np = trans_np.copy()
+    feet_chunks = []
+    verts_chunks = []
+    final_root_residual_y_max_abs = 0.0
     loss_value = 0.0
-    for _ in range(int(config.pose_iterations)):
-        optimizer.zero_grad()
-        masked_pose = pose_base + pose_residual * pose_mask[None, :]
-        root_y = torch.clamp(
-            root_residual[:, 1],
-            -float(config.max_root_y_shift),
-            float(config.max_root_y_shift),
-        )
-        masked_root = trans_base + torch.stack(
-            [torch.zeros_like(root_y), root_y, torch.zeros_like(root_y)],
-            dim=-1,
-        )
-        smpl = smpl_forward_axis_angle(model, masked_pose, betas, masked_root)
-        foot = smpl["feet"]
-        foot_y = foot[:, :, 1]
-        weighted_contact = contact * frame_w
-        loss = (
-            config.w_contact_ground * contact_ground_loss(foot_y, weighted_contact, config.ground_y)
-            + config.w_penetration * penetration_loss(foot_y, config.ground_y)
-            + config.w_foot_lock * foot_lock_loss(foot, weighted_contact)
-            + config.w_pose_smooth * smoothness_loss(masked_pose[:, pose_mask])
-            + config.w_root_smooth * smoothness_loss(masked_root)
-            + config.w_wham_prior * torch.mean((pose_residual[:, pose_mask]) ** 2)
-            + config.w_root_prior * torch.mean(root_residual * root_residual)
-        )
-        loss.backward()
-        optimizer.step()
-        loss_value = float(loss.detach().cpu())
 
-    with torch.no_grad():
-        final_pose = (pose_base + pose_residual * pose_mask[None, :]).detach().cpu().numpy().astype(np.float32)
-        final_root_residual = root_residual.detach().cpu().numpy().astype(np.float32)
-        final_root_residual[:, 0] = 0.0
-        final_root_residual[:, 2] = 0.0
-        final_root_residual[:, 1] = np.clip(
-            final_root_residual[:, 1],
-            -float(config.max_root_y_shift),
-            float(config.max_root_y_shift),
-        )
-        final_trans = (trans_np + final_root_residual).astype(np.float32)
-        final = smpl_forward_axis_angle(
-            model,
-            torch.tensor(final_pose, dtype=torch.float32, device=device),
-            betas,
-            torch.tensor(final_trans, dtype=torch.float32, device=device),
-        )
+    chunk_size = max(1, int(config.chunk_size))
+    for start in range(0, n_frames, chunk_size):
+        end = min(start + chunk_size, n_frames)
+        window_len = end - start
 
-    out["pose"] = final_pose
-    out["trans_world"] = final_trans
-    out["feet_refined"] = final["feet"].detach().cpu().numpy().astype(np.float32)
-    out["verts"] = final["vertices"].detach().cpu().numpy().astype(np.float32)
+        pose_base = torch.tensor(pose_np[start:end], dtype=torch.float32, device=device)
+        trans_base = torch.tensor(trans_np[start:end], dtype=torch.float32, device=device)
+        betas = torch.tensor(betas_np[start:end], dtype=torch.float32, device=device)
+        pose_residual = torch.zeros_like(pose_base, requires_grad=True)
+        root_residual = torch.zeros_like(trans_base, requires_grad=True)
+        optimizer = torch.optim.Adam([pose_residual, root_residual], lr=float(config.pose_lr))
+        model = build_body_model(str(device), batch_size=window_len)
+
+        with torch.no_grad():
+            initial = smpl_forward_axis_angle(model, pose_base, betas, trans_base)
+            n_feet = int(initial["feet"].shape[1])
+
+        contact_np = _contact_for_feet(record, n_frames=n_frames, n_feet=n_feet)[start:end]
+        contact = torch.tensor(contact_np, dtype=torch.float32, device=device)
+        frame_w = torch.tensor(frame_weights_np[start:end, None], dtype=torch.float32, device=device)
+
+        for _ in range(int(config.pose_iterations)):
+            optimizer.zero_grad()
+            masked_pose = pose_base + pose_residual * pose_mask[None, :]
+            root_y = torch.clamp(
+                root_residual[:, 1],
+                -float(config.max_root_y_shift),
+                float(config.max_root_y_shift),
+            )
+            masked_root = trans_base + torch.stack(
+                [torch.zeros_like(root_y), root_y, torch.zeros_like(root_y)],
+                dim=-1,
+            )
+            smpl = smpl_forward_axis_angle(model, masked_pose, betas, masked_root)
+            foot = smpl["feet"]
+            foot_y = foot[:, :, 1]
+            weighted_contact = contact * frame_w
+            loss = (
+                config.w_contact_ground * contact_ground_loss(foot_y, weighted_contact, config.ground_y)
+                + config.w_penetration * penetration_loss(foot_y, config.ground_y)
+                + config.w_foot_lock * foot_lock_loss(foot, weighted_contact)
+                + config.w_pose_smooth * smoothness_loss(masked_pose[:, pose_mask])
+                + config.w_root_smooth * smoothness_loss(masked_root)
+                + config.w_wham_prior * torch.mean((pose_residual[:, pose_mask]) ** 2)
+                + config.w_root_prior * torch.mean(root_residual * root_residual)
+            )
+            loss.backward()
+            optimizer.step()
+            loss_value = float(loss.detach().cpu())
+
+        with torch.no_grad():
+            final_pose = (pose_base + pose_residual * pose_mask[None, :]).detach().cpu().numpy().astype(np.float32)
+            final_root_residual = root_residual.detach().cpu().numpy().astype(np.float32)
+            final_root_residual[:, 0] = 0.0
+            final_root_residual[:, 2] = 0.0
+            final_root_residual[:, 1] = np.clip(
+                final_root_residual[:, 1],
+                -float(config.max_root_y_shift),
+                float(config.max_root_y_shift),
+            )
+            final_trans = (trans_np[start:end] + final_root_residual).astype(np.float32)
+            final = smpl_forward_axis_angle(
+                model,
+                torch.tensor(final_pose, dtype=torch.float32, device=device),
+                betas,
+                torch.tensor(final_trans, dtype=torch.float32, device=device),
+            )
+
+        final_pose_np[start:end] = final_pose
+        final_trans_np[start:end] = final_trans
+        feet_chunks.append(final["feet"].detach().cpu().numpy().astype(np.float32))
+        verts_chunks.append(final["vertices"].detach().cpu().numpy().astype(np.float32))
+        if len(final_root_residual):
+            final_root_residual_y_max_abs = max(
+                final_root_residual_y_max_abs,
+                float(np.max(np.abs(final_root_residual[:, 1]))),
+            )
+
+    final_feet = np.concatenate(feet_chunks, axis=0).astype(np.float32)
+    final_verts = np.concatenate(verts_chunks, axis=0).astype(np.float32)
+
+    out["pose"] = final_pose_np
+    out["trans_world"] = final_trans_np
+    out["feet_refined"] = final_feet
+    if "feet_world" in record:
+        out["feet_world"] = final_feet.copy()
+    if "feet" in record:
+        out["feet"] = final_feet.copy()
+    out["verts"] = final_verts
 
     return out, {
         "pose_optimizer_used": True,
         "iterations": int(config.pose_iterations),
         "final_loss": loss_value,
         "optimized_pose_dims": np.where(pose_mask_np)[0].tolist(),
-        "root_residual_y_max_abs": (
-            float(np.max(np.abs(final_root_residual[:, 1]))) if len(final_root_residual) else 0.0
-        ),
+        "root_residual_y_max_abs": final_root_residual_y_max_abs,
     }
 
 
