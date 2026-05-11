@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import copy
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Optional
 
 import numpy as np
 import torch
@@ -151,7 +151,7 @@ def _contact_for_feet(record: dict, n_frames: int, n_feet: int) -> np.ndarray:
 def optimize_lower_body_pose_smpl(
     record: dict,
     config: LowerBodyOptimizerConfig,
-    frame_weights: np.ndarray | None = None,
+    frame_weights: Optional[np.ndarray] = None,
 ) -> tuple[dict, dict]:
     from lib.models import build_body_model
 
@@ -379,7 +379,7 @@ def _apply_frame_y_shift(record: dict, shift: np.ndarray) -> None:
             record[key] = value
 
 
-def _trans_world_xyz(record: dict) -> np.ndarray | None:
+def _trans_world_xyz(record: dict) -> Optional[np.ndarray]:
     if "trans_world" not in record:
         return None
     trans_world = np.asarray(record["trans_world"], dtype=np.float32)
@@ -390,7 +390,7 @@ def _trans_world_xyz(record: dict) -> np.ndarray | None:
 
 def _clamp_total_root_y_shift(
     record: dict,
-    original_trans_world: np.ndarray | None,
+    original_trans_world: Optional[np.ndarray],
     config: LowerBodyOptimizerConfig,
 ) -> None:
     if original_trans_world is None or "trans_world" not in record:
@@ -529,7 +529,7 @@ def _pose_delta_report(original: dict, optimized: dict) -> dict:
     }
 
 
-def _safe_foot_points(record: dict) -> Any | None:
+def _safe_foot_points(record: dict) -> Optional[Any]:
     try:
         return get_record_foot_points(record)
     except ValueError:

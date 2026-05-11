@@ -1,6 +1,6 @@
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 import numpy as np
 
@@ -22,7 +22,7 @@ def write_json(path: Path, data: dict) -> None:
     path.write_text(json.dumps(to_jsonable(data), indent=2), encoding="utf-8")
 
 
-def _nested_number(data: dict, *keys: str) -> float | None:
+def _nested_number(data: dict, *keys: str) -> Optional[float]:
     value: Any = data
     for key in keys:
         if not isinstance(value, dict) or key not in value:
