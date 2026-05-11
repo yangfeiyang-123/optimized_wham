@@ -63,6 +63,20 @@ def default_retarget_out_dir(output_root: Path, wham_dir: Path, sequence: str) -
     )
 
 
+def default_stage_retarget_out_dir(
+    output_root: Path, sequence: str, stage_name: str
+) -> Path:
+    safe_dir = (
+        output_root / f"_opensim_retarget_{stage_name}" / safe_ascii_name(sequence)
+    )
+    if is_ascii_path(safe_dir):
+        return safe_dir
+
+    return REPO_ROOT / "output" / f"_opensim_retarget_{stage_name}" / safe_ascii_name(
+        sequence
+    )
+
+
 def require_file(path: Path, label: str) -> Path:
     if not path.exists():
         raise FileNotFoundError(f"{label} not found: {path}")
@@ -81,7 +95,7 @@ def load_fixed_beta_report(report_path: Path) -> dict:
     return report
 
 
-def parse_args() -> argparse.Namespace:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--video", required=True, help="Input video path.")
     parser.add_argument(
@@ -196,11 +210,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--lower-body-max-root-y-shift", type=float, default=0.25)
     parser.add_argument("--disable-lower-body-pose-pass", action="store_true")
     parser.add_argument("--lower-body-pose-iterations", type=int, default=80)
-    return parser.parse_args()
+    return parser
+
+
+def parse_args() -> argparse.Namespace:
+    return build_parser().parse_args()
 
 
 def main() -> int:
-    args = parse_args()
+    parser = build_parser()
+    args = parser.parse_args()
+    if args.optimize_lower_body and not args.world_grounded:
+        parser.error(
+            "--optimize-lower-body requires --world-grounded so ground_y=0 is meaningful."
+        )
+
     video = Path(args.video).resolve()
     require_file(video, "input video")
 
@@ -210,11 +234,6 @@ def main() -> int:
     wham_pkl = wham_dir / "wham_output.pkl"
     canonical_pkl = wham_dir / "canonical_wham_output.pkl"
     fixed_beta_report = wham_dir / "fixed_beta_report.json"
-    retarget_out = (
-        Path(args.retarget_out_dir).resolve()
-        if args.retarget_out_dir
-        else default_retarget_out_dir(output_root, wham_dir, sequence)
-    )
     world_grounded_out = (
         Path(args.world_grounded_out_dir).resolve()
         if args.world_grounded_out_dir
@@ -225,6 +244,18 @@ def main() -> int:
         if args.lower_body_out_dir
         else output_root / "_lower_body_optimized" / safe_ascii_name(sequence)
     )
+    if args.retarget_out_dir:
+        retarget_out = Path(args.retarget_out_dir).resolve()
+    elif args.optimize_lower_body:
+        retarget_out = default_stage_retarget_out_dir(
+            output_root, sequence, "lower_body"
+        )
+    elif args.world_grounded:
+        retarget_out = default_stage_retarget_out_dir(
+            output_root, sequence, "world_grounded"
+        )
+    else:
+        retarget_out = default_retarget_out_dir(output_root, wham_dir, sequence)
 
     if not args.skip_wham:
         wham_cmd = [
@@ -389,7 +420,10 @@ def main() -> int:
         print(f"lower_body_optimized_dir: {lower_body_out}")
         print(f"corrected_smpl_pkl: {retarget_input_pkl}")
     print(f"retarget_dir: {retarget_out}")
-    print(f"opensim_motion: {retarget_out / 'opensim_ik.mot'}")
+    if args.skip_ik:
+        print("opensim_motion: <not run; --skip-ik>")
+    else:
+        print(f"opensim_motion: {retarget_out / 'opensim_ik.mot'}")
     print(
         f"beta_variation_after_max_abs: {beta_report['pipeline_beta_variation_after_max_abs']:.8g}"
     )
