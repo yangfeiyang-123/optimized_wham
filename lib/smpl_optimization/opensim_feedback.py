@@ -59,9 +59,10 @@ def parse_ik_log_metrics(path: Path) -> dict:
 
 
 def build_feedback_weights(metrics: dict, num_frames: int, rms_threshold=0.08) -> np.ndarray:
-    weights = np.ones(int(num_frames), dtype=np.float32)
+    n = max(0, int(num_frames))
+    weights = np.ones(n, dtype=np.float32)
     for frame_metrics in metrics.get("frames", []):
         frame = int(frame_metrics.get("frame", -1))
-        if 0 <= frame < num_frames and float(frame_metrics.get("rms", 0.0)) > float(rms_threshold):
+        if 0 <= frame < n and float(frame_metrics.get("rms", 0.0)) > float(rms_threshold):
             weights[frame] = 2.0
     return weights

@@ -38,6 +38,43 @@ def test_parse_ik_log_metrics_returns_neutral_metrics_for_empty_log(tmp_path: Pa
     }
 
 
+def test_parse_ik_log_metrics_handles_opensim_format_without_spaces(tmp_path: Path):
+    log = tmp_path / "ik.log"
+    log.write_text(
+        "[info] Frame 0 (t = 0.0): marker error: RMS=0.0209261, max=0.0792321 ([Link])",
+        encoding="utf-8",
+    )
+    metrics = parse_ik_log_metrics(log)
+    assert metrics["num_frames"] == 1
+    assert metrics["mean_rms"] == 0.0209261
+    assert metrics["max_marker_name"] == "[Link]"
+
+
+def test_parse_ik_log_metrics_handles_scientific_notation(tmp_path: Path):
+    log = tmp_path / "ik.log"
+    log.write_text(
+        "[info] Frame 2 (t = 0.2): marker error: RMS = 1.2e-02, max = 8.0E-02 (ankle_r)",
+        encoding="utf-8",
+    )
+    metrics = parse_ik_log_metrics(log)
+    assert metrics["num_frames"] == 1
+    assert metrics["mean_rms"] == 0.012
+    assert metrics["max_marker_name"] == "ankle_r"
+
+
+def test_parse_ik_log_metrics_returns_neutral_metrics_for_no_matches(tmp_path: Path):
+    log = tmp_path / "no_matches.log"
+    log.write_text("OpenSim finished without marker error rows", encoding="utf-8")
+    metrics = parse_ik_log_metrics(log)
+    assert metrics == {
+        "num_frames": 0,
+        "mean_rms": 0.0,
+        "max_rms": 0.0,
+        "max_marker_name": "",
+        "frames": [],
+    }
+
+
 def test_build_feedback_weights_marks_bad_frames():
     metrics = {"frames": [{"frame": 0, "rms": 0.03}, {"frame": 1, "rms": 0.12}]}
     weights = build_feedback_weights(metrics, num_frames=3, rms_threshold=0.08)
@@ -55,3 +92,16 @@ def test_build_feedback_weights_ignores_out_of_range_frames():
     weights = build_feedback_weights(metrics, num_frames=3, rms_threshold=0.08)
     assert weights.dtype == np.float32
     assert weights.tolist() == [1.0, 2.0, 1.0]
+
+
+def test_build_feedback_weights_normalizes_fractional_num_frames():
+    metrics = {"frames": [{"frame": 3, "rms": 0.12}]}
+    weights = build_feedback_weights(metrics, num_frames=3.7, rms_threshold=0.08)
+    assert weights.dtype == np.float32
+    assert weights.tolist() == [1.0, 1.0, 1.0]
+
+
+def test_build_feedback_weights_returns_empty_float32_for_zero_frames():
+    weights = build_feedback_weights({"frames": [{"frame": 0, "rms": 0.12}]}, num_frames=0)
+    assert weights.dtype == np.float32
+    assert weights.tolist() == []
