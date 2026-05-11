@@ -14,6 +14,11 @@ def test_beta_variation_max_abs_zero_for_fixed_beta():
     assert beta_variation_max_abs(betas) == 0.0
 
 
+def test_beta_variation_max_abs_treats_1d_beta_as_single_frame():
+    betas = np.arange(10, dtype=np.float32)
+    assert beta_variation_max_abs(betas) == 0.0
+
+
 def test_beta_variation_max_abs_detects_frame_change():
     betas = np.zeros((3, 10), dtype=np.float32)
     betas[2, 4] = 0.25
@@ -43,6 +48,22 @@ def test_contact_foot_sliding_uses_contact_mask():
     assert report["num_sliding"] == 1
 
 
+def test_contact_foot_sliding_ignores_vertical_motion():
+    points = np.array(
+        [
+            [[0.0, 0.0, 0.0]],
+            [[0.0, 1.0, 0.0]],
+            [[0.0, 2.0, 0.0]],
+        ],
+        dtype=np.float32,
+    )
+    contact = np.ones((3, 1), dtype=np.float32)
+    report = contact_foot_sliding(points, contact, fps=10.0, threshold=1.0)
+    assert report["mean_contact_speed"] == 0.0
+    assert report["max_contact_speed"] == 0.0
+    assert report["num_sliding"] == 0
+
+
 def test_root_vertical_jitter_is_second_difference_rms():
     trans = np.array(
         [[0.0, 0.0, 0.0], [0.0, 0.1, 0.0], [0.0, -0.1, 0.0], [0.0, 0.0, 0.0]],
@@ -52,8 +73,21 @@ def test_root_vertical_jitter_is_second_difference_rms():
     assert report["rms_vertical_accel"] > 0.0
 
 
+def test_root_vertical_jitter_returns_zero_for_1d_input():
+    trans = np.array([0.0, 1.0, 0.0], dtype=np.float32)
+    report = root_vertical_jitter(trans)
+    assert report["rms_vertical_accel"] == 0.0
+    assert report["max_vertical_accel"] == 0.0
+
+
 def test_pose_delta_max_abs_compares_matching_prefix():
     original = np.zeros((2, 72), dtype=np.float32)
     corrected = original.copy()
     corrected[1, 10] = -0.5
     assert pose_delta_max_abs(original, corrected) == 0.5
+
+
+def test_pose_delta_max_abs_treats_1d_pose_as_single_frame():
+    original = np.zeros(72, dtype=np.float32)
+    corrected = np.zeros((2, 72), dtype=np.float32)
+    assert pose_delta_max_abs(original, corrected) == 0.0
