@@ -62,7 +62,9 @@ def optimize_record(record: dict, config: LowerBodyOptimizerConfig) -> tuple[dic
     pose_report = {"pose_optimizer_used": False}
     if config.enable_pose_pass:
         out_record, pose_report = optimize_lower_body_pose_smpl(out_record, config)
-        _sync_pose_world_to_pose(out_record)
+        optimized_pose_key = pose_report.get("optimized_pose_key")
+        if optimized_pose_key in ("pose", "pose_world"):
+            _sync_lower_body_pose_fields(out_record, source_key=str(optimized_pose_key))
     _clamp_total_root_y_shift(out_record, original_trans_world, config)
     after_quality = _quality_report(out_record, config)
 
@@ -155,14 +157,15 @@ def optimize_lower_body_pose_smpl(
 ) -> tuple[dict, dict]:
     from lib.models import build_body_model
 
-    if "pose" not in record or "betas" not in record or "trans_world" not in record:
+    pose_key = "pose_world" if "pose_world" in record else "pose"
+    if pose_key not in record or "betas" not in record or "trans_world" not in record:
         return copy.deepcopy(record), {
             "pose_optimizer_used": False,
-            "reason": "missing_pose_betas_or_trans_world",
+            "reason": "missing_pose_or_betas_or_trans_world",
         }
 
     out = copy.deepcopy(record)
-    pose_np = np.asarray(record["pose"], dtype=np.float32)
+    pose_np = np.asarray(record[pose_key], dtype=np.float32)
     if pose_np.ndim != 2 or len(pose_np) == 0:
         return out, {"pose_optimizer_used": False, "reason": "empty_sequence"}
 
@@ -277,8 +280,8 @@ def optimize_lower_body_pose_smpl(
     final_feet = np.concatenate(feet_chunks, axis=0).astype(np.float32)
     final_verts = np.concatenate(verts_chunks, axis=0).astype(np.float32)
 
-    out["pose"] = final_pose_np
-    _sync_pose_world_to_pose(out)
+    out[pose_key] = final_pose_np
+    _sync_lower_body_pose_fields(out, source_key=pose_key)
     out["trans_world"] = final_trans_np
     out["feet_refined"] = final_feet
     if "feet_world" in record:
@@ -291,6 +294,7 @@ def optimize_lower_body_pose_smpl(
         "pose_optimizer_used": True,
         "iterations": int(config.pose_iterations),
         "final_loss": loss_value,
+        "optimized_pose_key": pose_key,
         "optimized_pose_dims": np.where(pose_mask_np)[0].tolist(),
         "root_residual_y_max_abs": final_root_residual_y_max_abs,
     }
@@ -474,18 +478,22 @@ def _fit_frame_weights(frame_weights: np.ndarray, *, n_frames: int) -> np.ndarra
     return fitted
 
 
-def _sync_pose_world_to_pose(record: dict) -> None:
+def _sync_lower_body_pose_fields(record: dict, *, source_key: str) -> None:
     if "pose" not in record or "pose_world" not in record:
         return
 
-    pose = np.asarray(record["pose"])
-    pose_world = np.asarray(record["pose_world"]).copy()
-    if pose.ndim != 2 or pose_world.ndim != 2 or pose.shape != pose_world.shape:
+    if source_key not in ("pose", "pose_world"):
         return
 
-    pose_mask = lower_body_pose_mask(pose.shape[1])
-    pose_world[:, pose_mask] = pose[:, pose_mask]
-    record["pose_world"] = pose_world
+    target_key = "pose" if source_key == "pose_world" else "pose_world"
+    source = np.asarray(record[source_key])
+    target = np.asarray(record[target_key]).copy()
+    if source.ndim != 2 or target.ndim != 2 or source.shape != target.shape:
+        return
+
+    pose_mask = lower_body_pose_mask(source.shape[1])
+    target[:, pose_mask] = source[:, pose_mask]
+    record[target_key] = target
 
 
 def _root_shift_reason(record: dict, shift: np.ndarray) -> str:

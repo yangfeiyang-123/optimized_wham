@@ -359,13 +359,14 @@ def write_ik_setup(
     fps: float,
     n_frames: int,
     fix_root: bool,
+    accuracy: float,
 ) -> None:
     root = ET.Element("OpenSimDocument", {"Version": "40000"})
     tool = ET.SubElement(root, "InverseKinematicsTool", {"name": "smpl_to_mimicmsk_opensim_ik"})
     ET.SubElement(tool, "results_directory").text = str(output_motion_file.parent)
     ET.SubElement(tool, "model_file").text = str(model_file)
     ET.SubElement(tool, "constraint_weight").text = "Inf"
-    ET.SubElement(tool, "accuracy").text = "1e-5"
+    ET.SubElement(tool, "accuracy").text = f"{accuracy:.8g}"
     task_set = ET.SubElement(tool, "IKTaskSet", {"name": "ik_tasks"})
     objects = ET.SubElement(task_set, "objects")
 
@@ -453,6 +454,12 @@ def main() -> int:
     parser.add_argument("--run-ik", action="store_true", help="Run OpenSim IK after writing assets.")
     parser.add_argument("--free-root", action="store_true", help="Diagnostic mode: do not lock root coordinates in IK.")
     parser.add_argument(
+        "--ik-accuracy",
+        type=float,
+        default=1e-4,
+        help="OpenSim IK accuracy tolerance. 1e-4 is more stable for monocular SMPL marker targets.",
+    )
+    parser.add_argument(
         "--root-calibration",
         choices=["none", "constant_from_free_ik"],
         default="constant_from_free_ik",
@@ -509,6 +516,7 @@ def main() -> int:
         args.fps,
         marker_positions.shape[0],
         fix_root=final_fix_root,
+        accuracy=args.ik_accuracy,
     )
 
     print(f"track_id: {track_id}")
@@ -547,6 +555,7 @@ def main() -> int:
                 args.fps,
                 calibration_frames,
                 fix_root=False,
+                accuracy=args.ik_accuracy,
             )
             run_opensim(opensim_cmd, calibration_setup)
             deltas = root_column_delta(calibration_root_mot, calibration_motion, calibration_frames)

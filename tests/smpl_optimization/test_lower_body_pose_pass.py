@@ -158,9 +158,14 @@ def test_pose_pass_updates_pose_world_for_retargeted_pose(monkeypatch):
 
     def fake_optimize_pose(record, config, frame_weights=None):
         out = {key: value.copy() if hasattr(value, "copy") else value for key, value in record.items()}
-        mask = lower_body_pose_mask(out["pose"].shape[1])
-        out["pose"][:, mask] += 0.25
-        return out, {"pose_optimizer_used": True, "iterations": 1, "final_loss": 0.0}
+        mask = lower_body_pose_mask(out["pose_world"].shape[1])
+        out["pose_world"][:, mask] = 0.25
+        return out, {
+            "pose_optimizer_used": True,
+            "iterations": 1,
+            "final_loss": 0.0,
+            "optimized_pose_key": "pose_world",
+        }
 
     monkeypatch.setattr("lib.smpl_optimization.lower_body.optimize_lower_body_pose_smpl", fake_optimize_pose)
 
