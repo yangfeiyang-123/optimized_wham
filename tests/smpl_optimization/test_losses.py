@@ -1,0 +1,57 @@
+import torch
+
+from lib.smpl_optimization.losses import (
+    contact_ground_loss,
+    foot_lock_loss,
+    penetration_loss,
+    smoothness_loss,
+    weighted_l2,
+)
+
+
+def test_penetration_loss_only_penalizes_points_below_ground():
+    y = torch.tensor([[0.1, -0.2, -0.1]])
+    loss = penetration_loss(y, ground_y=0.0)
+    assert torch.isclose(loss, torch.tensor((0.2**2 + 0.1**2) / 3.0))
+
+
+def test_contact_ground_loss_uses_soft_contact_weights():
+    y = torch.tensor([[0.1, 0.3]])
+    contact = torch.tensor([[1.0, 0.0]])
+    loss = contact_ground_loss(y, contact, ground_y=0.0)
+    assert torch.isclose(loss, torch.tensor(0.01))
+
+
+def test_foot_lock_loss_uses_contact_pairs():
+    points = torch.tensor([[[0.0, 0.0, 0.0]], [[0.2, 0.0, 0.0]], [[0.5, 0.0, 0.0]]])
+    contact = torch.tensor([[1.0], [1.0], [0.0]])
+    loss = foot_lock_loss(points, contact)
+    assert torch.isclose(loss, torch.tensor(0.04))
+
+
+def test_smoothness_loss_zero_for_linear_motion():
+    x = torch.tensor([[0.0], [1.0], [2.0], [3.0]])
+    assert smoothness_loss(x).item() == 0.0
+
+
+def test_weighted_l2_supports_zero_weights():
+    value = torch.tensor([1.0, 2.0])
+    target = torch.zeros_like(value)
+    weight = torch.tensor([0.0, 1.0])
+    assert torch.isclose(weighted_l2(value, target, weight), torch.tensor(4.0))
+
+
+def test_weighted_l2_returns_zero_for_all_zero_tensor_weights():
+    value = torch.tensor([1.0, 2.0])
+    target = torch.zeros_like(value)
+    weight = torch.zeros_like(value)
+    assert weighted_l2(value, target, weight).item() == 0.0
+
+
+def test_temporal_losses_return_zero_for_short_sequences():
+    points = torch.tensor([[[1.0, 0.0, 0.0]]])
+    contact = torch.tensor([[1.0]])
+    value = torch.tensor([[1.0], [2.0]])
+
+    assert foot_lock_loss(points, contact).item() == 0.0
+    assert smoothness_loss(value).item() == 0.0
