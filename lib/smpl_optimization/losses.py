@@ -9,6 +9,9 @@ def weighted_l2(value, target, weight=1.0):
     error = (value - target) ** 2
 
     if torch.is_tensor(weight):
+        if weight.ndim == 0:
+            return error.mean() * weight
+
         weighted_error = error * weight
         weight_sum = weight.sum()
         if weight_sum.item() == 0:

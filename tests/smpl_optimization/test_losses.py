@@ -48,6 +48,16 @@ def test_weighted_l2_returns_zero_for_all_zero_tensor_weights():
     assert weighted_l2(value, target, weight).item() == 0.0
 
 
+def test_weighted_l2_scalar_tensor_weight_matches_python_scalar_weight():
+    value = torch.tensor([1.0, 2.0])
+    target = torch.zeros_like(value)
+
+    tensor_weight_loss = weighted_l2(value, target, torch.tensor(1.0))
+    scalar_weight_loss = weighted_l2(value, target, 1.0)
+
+    assert torch.isclose(tensor_weight_loss, scalar_weight_loss)
+
+
 def test_temporal_losses_return_zero_for_short_sequences():
     points = torch.tensor([[[1.0, 0.0, 0.0]]])
     contact = torch.tensor([[1.0]])
