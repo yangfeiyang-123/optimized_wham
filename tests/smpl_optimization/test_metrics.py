@@ -80,6 +80,12 @@ def test_root_vertical_jitter_returns_zero_for_1d_input():
     assert report["max_vertical_accel"] == 0.0
 
 
+def test_root_vertical_jitter_returns_zero_for_rank_3_input():
+    report = root_vertical_jitter(np.zeros((3, 1, 3), dtype=np.float32))
+    assert report["rms_vertical_accel"] == 0.0
+    assert report["max_vertical_accel"] == 0.0
+
+
 def test_pose_delta_max_abs_compares_matching_prefix():
     original = np.zeros((2, 72), dtype=np.float32)
     corrected = original.copy()
@@ -90,4 +96,10 @@ def test_pose_delta_max_abs_compares_matching_prefix():
 def test_pose_delta_max_abs_treats_1d_pose_as_single_frame():
     original = np.zeros(72, dtype=np.float32)
     corrected = np.zeros((2, 72), dtype=np.float32)
+    assert pose_delta_max_abs(original, corrected) == 0.0
+
+
+def test_pose_delta_max_abs_flattens_non_frame_dimensions_before_comparing_prefix():
+    original = np.zeros((1, 2, 3), dtype=np.float32)
+    corrected = np.zeros((1, 2), dtype=np.float32)
     assert pose_delta_max_abs(original, corrected) == 0.0

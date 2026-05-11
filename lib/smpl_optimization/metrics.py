@@ -61,9 +61,9 @@ def root_vertical_jitter(trans_world):
     trans_world = np.asarray(trans_world)
     if (
         trans_world.size == 0
-        or trans_world.ndim < 2
+        or trans_world.ndim != 2
         or trans_world.shape[0] <= 2
-        or trans_world.shape[-1] <= 1
+        or trans_world.shape[1] <= 1
     ):
         return {
             "rms_vertical_accel": 0.0,
@@ -88,12 +88,19 @@ def pose_delta_max_abs(original_pose, corrected_pose):
     if corrected_pose.ndim == 1:
         corrected_pose = corrected_pose.reshape(1, -1)
 
-    common_shape = tuple(
-        min(original_pose.shape[axis], corrected_pose.shape[axis])
-        for axis in range(min(original_pose.ndim, corrected_pose.ndim))
-    )
-    if any(size == 0 for size in common_shape):
+    original_pose = original_pose.reshape(original_pose.shape[0], -1)
+    corrected_pose = corrected_pose.reshape(corrected_pose.shape[0], -1)
+
+    common_frames = min(original_pose.shape[0], corrected_pose.shape[0])
+    common_values = min(original_pose.shape[1], corrected_pose.shape[1])
+    if common_frames == 0 or common_values == 0:
         return 0.0
 
-    slices = tuple(slice(0, size) for size in common_shape)
-    return _clean_float(np.max(np.abs(original_pose[slices] - corrected_pose[slices])))
+    return _clean_float(
+        np.max(
+            np.abs(
+                original_pose[:common_frames, :common_values]
+                - corrected_pose[:common_frames, :common_values]
+            )
+        )
+    )
