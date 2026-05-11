@@ -1,6 +1,6 @@
 # WHAM 基础上的项目修正与改进记录
 
-记录时间：2026-05-11  
+记录时间：2026-05-11
 项目目录：`D:\Main\Research\IEProgram\Bad_Muskeleton\WorldSMPLGen\WHAM`
 
 ## 目标
@@ -334,19 +334,19 @@ pelvis: 0.927 ~ 0.973 m
 
 ## 当前仍存在的问题
 
-1. 最大穿地还没有完全消除  
+1. 最大穿地还没有完全消除
    当前 root-level 修正能明显降低平均穿地，但最大穿地仍可能在 1-3 cm 量级。
 
-2. 下肢局部动作仍需要优化  
+2. 下肢局部动作仍需要优化
    当前版本主要优化 root translation 和地面对齐，没有直接优化膝、踝、趾关节。
 
-3. OpenSim IK 不包含真实接触约束  
+3. OpenSim IK 不包含真实接触约束
    OpenSim IK 目前仍是 marker fitting，没有加入 foot-ground contact constraint，所以脚尖仍可能轻微穿地或滑动。
 
-4. `--free-root` 虽然稳定，但不保证绝对 root 轨迹被完全遵循  
+4. `--free-root` 虽然稳定，但不保证绝对 root 轨迹被完全遵循
    当前默认 `--free-root` 是为了避免 fixed-root 导致 IK 误差大，但这也意味着 OpenSim 会自己拟合 root。
 
-5. 仍需视频可视化评估  
+5. 仍需视频可视化评估
    数值指标显示改进，但最终动作是否自然，还需要并排视频或 OpenSim 可视化检查。
 
 ## 后续建议
