@@ -54,6 +54,7 @@ _SHIFTED_3D_SEQUENCE_KEYS = ("verts", "feet_world", "feet_refined", "feet")
 
 def optimize_record(record: dict, config: LowerBodyOptimizerConfig) -> tuple[dict, dict]:
     out_record = copy.deepcopy(record)
+    original_trans_world = _trans_world_xyz(record)
 
     before_quality = _quality_report(record, config)
     shift = _compute_frame_y_shift(record, config)
@@ -61,21 +62,32 @@ def optimize_record(record: dict, config: LowerBodyOptimizerConfig) -> tuple[dic
     pose_report = {"pose_optimizer_used": False}
     if config.enable_pose_pass:
         out_record, pose_report = optimize_lower_body_pose_smpl(out_record, config)
+    _clamp_total_root_y_shift(out_record, original_trans_world, config)
     after_quality = _quality_report(out_record, config)
 
     pose_delta_report = _pose_delta_report(record, out_record)
     beta_variation_after = beta_variation_max_abs(out_record.get("betas", np.asarray([])))
     frame_count_unchanged = _frame_count(record) == _frame_count(out_record)
     opensim_report = {
+        "status": "not_run",
+        "used_for_success": False,
         "ik_rms_not_worse": True,
         "ground_clearance_not_worse": True,
     }
+    deterministic_root_y_shift_max_abs = float(np.max(np.abs(shift))) if shift.size else 0.0
+    pose_root_residual_y_max_abs = float(pose_report.get("root_residual_y_max_abs", 0.0) or 0.0)
+    root_y_shift_budget = max(float(config.max_root_y_shift), 0.0)
+    total_root_y_shift_max_abs = _total_root_y_shift_max_abs(record, out_record)
 
     lower_body_optimization_report = {
         "applied_root_y_shift": shift,
         "max_applied_root_y_shift": float(round(float(np.max(shift)), 8)) if shift.size else 0.0,
         "mean_applied_root_y_shift": float(round(float(np.mean(shift)), 8)) if shift.size else 0.0,
         "max_root_y_shift": float(config.max_root_y_shift),
+        "root_y_shift_budget": float(root_y_shift_budget),
+        "deterministic_root_y_shift_max_abs": float(round(deterministic_root_y_shift_max_abs, 8)),
+        "pose_root_residual_y_max_abs": float(round(pose_root_residual_y_max_abs, 8)),
+        "total_root_y_shift_max_abs": float(round(total_root_y_shift_max_abs, 8)),
         "ground_y": float(config.ground_y),
         "foot_clearance": float(config.foot_clearance),
         "foot_point_source": before_quality["foot_point_source"],
@@ -363,6 +375,62 @@ def _apply_frame_y_shift(record: dict, shift: np.ndarray) -> None:
             n_frames = min(value.shape[0], shift.shape[0])
             value[:n_frames, :, 1] += shift[:n_frames, None]
             record[key] = value
+
+
+def _trans_world_xyz(record: dict) -> np.ndarray | None:
+    if "trans_world" not in record:
+        return None
+    trans_world = np.asarray(record["trans_world"], dtype=np.float32)
+    if trans_world.ndim != 2 or trans_world.shape[0] == 0 or trans_world.shape[1] < 2:
+        return None
+    return trans_world[:, :3].copy()
+
+
+def _clamp_total_root_y_shift(
+    record: dict,
+    original_trans_world: np.ndarray | None,
+    config: LowerBodyOptimizerConfig,
+) -> None:
+    if original_trans_world is None or "trans_world" not in record:
+        return
+
+    trans_world = np.asarray(record["trans_world"]).copy()
+    if trans_world.ndim != 2 or trans_world.shape[0] == 0 or trans_world.shape[1] < 2:
+        return
+
+    n_frames = min(trans_world.shape[0], original_trans_world.shape[0])
+    if n_frames == 0:
+        return
+
+    budget = max(float(config.max_root_y_shift), 0.0)
+    original_y = original_trans_world[:n_frames, 1]
+    clamped_y = np.clip(trans_world[:n_frames, 1], original_y - budget, original_y + budget)
+    correction = clamped_y - trans_world[:n_frames, 1]
+    if not np.any(correction):
+        return
+
+    trans_world[:n_frames, 1] = clamped_y
+    record["trans_world"] = trans_world
+    for key in _SHIFTED_3D_SEQUENCE_KEYS:
+        if key not in record:
+            continue
+        value = np.asarray(record[key]).copy()
+        if value.ndim == 3 and value.shape[-1] >= 2:
+            rows = min(value.shape[0], n_frames)
+            value[:rows, :, 1] += correction[:rows, None]
+            record[key] = value
+
+
+def _total_root_y_shift_max_abs(original: dict, optimized: dict) -> float:
+    original_trans_world = _trans_world_xyz(original)
+    optimized_trans_world = _trans_world_xyz(optimized)
+    if original_trans_world is None or optimized_trans_world is None:
+        return 0.0
+
+    n_frames = min(original_trans_world.shape[0], optimized_trans_world.shape[0])
+    if n_frames == 0:
+        return 0.0
+    return float(np.max(np.abs(optimized_trans_world[:n_frames, 1] - original_trans_world[:n_frames, 1])))
 
 
 def _fit_contact_shape(contact: np.ndarray, *, n_frames: int, n_points: int) -> np.ndarray:

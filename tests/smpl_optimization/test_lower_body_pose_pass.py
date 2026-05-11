@@ -144,6 +144,45 @@ def test_pose_pass_changes_only_lower_body_when_enabled(monkeypatch):
     assert np.isclose(reports["pose_delta_report"]["lower_body_max_abs"], 0.01)
 
 
+def test_pose_pass_cannot_push_total_root_y_shift_past_budget(monkeypatch):
+    record = {
+        "betas": np.zeros((3, 10), dtype=np.float32),
+        "pose": np.zeros((3, 72), dtype=np.float32),
+        "trans_world": np.zeros((3, 3), dtype=np.float32),
+        "feet_refined": np.array(
+            [[[0.0, -0.10, 0.0]], [[0.0, -0.10, 0.0]], [[0.0, -0.10, 0.0]]],
+            dtype=np.float32,
+        ),
+        "contact": np.ones((3, 1), dtype=np.float32),
+    }
+    max_root_y_shift = 0.05
+
+    def fake_optimize_pose(record, config, frame_weights=None):
+        out = {key: value.copy() if hasattr(value, "copy") else value for key, value in record.items()}
+        out["trans_world"][:, 1] += max_root_y_shift
+        return out, {"pose_optimizer_used": True, "root_residual_y_max_abs": max_root_y_shift}
+
+    monkeypatch.setattr("lib.smpl_optimization.lower_body.optimize_lower_body_pose_smpl", fake_optimize_pose)
+
+    out, reports = optimize_record(
+        record,
+        LowerBodyOptimizerConfig(
+            fps=30.0,
+            enable_pose_pass=True,
+            max_root_y_shift=max_root_y_shift,
+            device="cpu",
+        ),
+    )
+
+    total_y_shift = out["trans_world"][:, 1] - record["trans_world"][:, 1]
+    lower_report = reports["lower_body_optimization_report"]
+    assert np.max(np.abs(total_y_shift)) <= max_root_y_shift + 1e-6
+    assert lower_report["deterministic_root_y_shift_max_abs"] == max_root_y_shift
+    assert lower_report["pose_root_residual_y_max_abs"] == max_root_y_shift
+    assert lower_report["total_root_y_shift_max_abs"] <= max_root_y_shift + 1e-6
+    assert lower_report["root_y_shift_budget"] == max_root_y_shift
+
+
 def test_pose_optimizer_builds_models_no_larger_than_chunk_size(monkeypatch):
     batch_sizes = install_differentiable_fake_model(monkeypatch)
     record = make_pose_optimizer_record(n_frames=5)

@@ -57,6 +57,19 @@ def build_validation_summary(
 ) -> dict:
     upper_body_max_abs = _nested_number(pose_delta, "upper_body_max_abs")
     lower_body_max_abs = _nested_number(pose_delta, "lower_body_max_abs")
+    opensim_status = str(opensim.get("status", "run"))
+    opensim_used_for_success = bool(opensim.get("used_for_success", opensim_status != "not_run"))
+    opensim = {
+        **opensim,
+        "status": opensim_status,
+        "used_for_success": opensim_used_for_success,
+    }
+    opensim_ik_rms_not_worse = (
+        True if not opensim_used_for_success else bool(opensim.get("ik_rms_not_worse", False))
+    )
+    opensim_ground_clearance_not_worse = (
+        True if not opensim_used_for_success else bool(opensim.get("ground_clearance_not_worse", False))
+    )
 
     checks = {
         "beta_variation_after_max_abs": beta_variation_after_max_abs == 0.0,
@@ -66,8 +79,8 @@ def build_validation_summary(
         "root_vertical_jitter_not_worse": _not_worse(before, after, "root", "rms_vertical_accel"),
         "upper_body_pose_delta_small": upper_body_max_abs is not None and upper_body_max_abs <= 0.05,
         "lower_body_pose_delta_bounded": lower_body_max_abs is not None and lower_body_max_abs <= 1.2,
-        "opensim_ik_rms_not_worse": bool(opensim.get("ik_rms_not_worse", False)),
-        "opensim_ground_clearance_not_worse": bool(opensim.get("ground_clearance_not_worse", False)),
+        "opensim_ik_rms_not_worse": opensim_ik_rms_not_worse,
+        "opensim_ground_clearance_not_worse": opensim_ground_clearance_not_worse,
     }
 
     summary = {

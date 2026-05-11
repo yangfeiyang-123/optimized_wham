@@ -110,3 +110,11 @@ def test_optimize_record_caps_root_y_shift():
     assert np.max(out["trans_world"][:, 1] - record["trans_world"][:, 1]) <= 0.05 + 1e-6
     assert np.min(out["feet_refined"][:, :, 1]) < 0.0
     assert reports["lower_body_optimization_report"]["max_applied_root_y_shift"] == 0.05
+
+
+def test_optimize_record_marks_opensim_validation_not_run_by_default():
+    _, reports = optimize_record(make_record(), LowerBodyOptimizerConfig(fps=30.0))
+
+    opensim = reports["validation_summary"]["opensim"]
+    assert opensim["status"] == "not_run"
+    assert opensim["used_for_success"] is False
