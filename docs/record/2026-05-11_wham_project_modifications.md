@@ -396,3 +396,23 @@ pelvis: 0.927 ~ 0.973 m
 - 一键流水线已经可以从视频直接生成 OpenSim IK motion。
 
 当前还没完成的是更精细的 foot locking 和 lower-body pose/contact 优化，这是下一阶段 `world_grounded_smpl optimizer` 应该继续推进的方向。
+
+## Lower-Body SMPL Optimizer
+
+Added a lower-body SMPL correction stage after fixed-beta canonicalization and world grounding. The stage outputs `corrected_smpl.pkl`, keeps beta fixed, preserves frame count, reports foot penetration and sliding metrics, and can run before OpenSim/MuJoCo retargeting.
+
+The intended full pipeline is:
+
+```text
+WHAM -> fixed beta -> world grounded -> lower-body corrected SMPL -> OpenSim/MuJoCo retarget
+```
+
+OpenSim remains an evaluator and feedback source rather than the final product.
+
+Current recommended command:
+
+```text
+python scripts\video_to_fixed_smpl_to_opensim.py --video <video> --output-pth output\demo --device cuda --fps <fps> --world-grounded --optimize-lower-body
+```
+
+`--optimize-lower-body` now requires `--world-grounded`.
