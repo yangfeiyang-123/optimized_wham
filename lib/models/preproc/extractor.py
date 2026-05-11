@@ -27,10 +27,48 @@ class FeatureExtractor(object):
         
         ckpt = osp.join(ROOT_DIR, 'checkpoints', 'hmr2a.ckpt')
         self.model = hmr2(ckpt).to(device).eval()
+
+    def _iter_frame_subjects(self, tracking_results, frame_id):
+        subjects = []
+        for _id, val in tracking_results.items():
+            if frame_id not in val['frame_id']:
+                continue
+            frame_id2 = np.where(val['frame_id'] == frame_id)[0][0]
+            subjects.append((_id, frame_id2, val))
+        return subjects
+
+    @torch.no_grad()
+    def _encode_batch(self, batch):
+        outputs = []
+        for start in range(0, len(batch), self.max_batch_size):
+            chunk = batch[start:start + self.max_batch_size]
+            outputs.append(self.model(chunk, encode=True).cpu())
+        return torch.cat(outputs, dim=0)
+
+    @torch.no_grad()
+    def _predict_init_batch(self, batch):
+        global_orients, body_poses, betas = [], [], []
+        for start in range(0, len(batch), self.max_batch_size):
+            chunk = batch[start:start + self.max_batch_size]
+            pred_global_orient, pred_body_pose, pred_betas, _ = self.model(chunk, encode=False)
+            global_orients.append(pred_global_orient.cpu())
+            body_poses.append(pred_body_pose.cpu())
+            betas.append(pred_betas.cpu())
+        return (
+            torch.cat(global_orients, dim=0),
+            torch.cat(body_poses, dim=0),
+            torch.cat(betas, dim=0),
+        )
     
+    @torch.no_grad()
     def run(self, video, tracking_results, patch_h=256, patch_w=256):
         
-        if osp.isfile(video):
+        if isinstance(video, (list, tuple)):
+            cap = video
+            is_video = False
+            length = len(video)
+            height, width = cv2.imread(video[0]).shape[:2]
+        elif osp.isfile(video):
             cap = cv2.VideoCapture(video)
             is_video = True
             length = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
@@ -52,35 +90,51 @@ class FeatureExtractor(object):
                 if frame_id >= len(cap):
                     break
                 img = cv2.imread(cap[frame_id])
-            
-            for _id, val in tracking_results.items():
-                if not frame_id in val['frame_id']: continue
-                
-                frame_id2 = np.where(val['frame_id'] == frame_id)[0][0]
-                bbox = val['bbox'][frame_id2]
-                cx, cy, scale = bbox
-                
-                norm_img, crop_img = process_image(img[..., ::-1], [cx, cy], scale, patch_h, patch_w)
-                norm_img = torch.from_numpy(norm_img).unsqueeze(0).to(self.device)
-                feature = self.model(norm_img, encode=True)
-                tracking_results[_id]['features'].append(feature.cpu())
-                
-                if frame_id2 == 0: # First frame of this subject
-                    tracking_results = self.predict_init(norm_img, tracking_results, _id, flip_eval=False)
-                    
+            subjects = self._iter_frame_subjects(tracking_results, frame_id)
+            if subjects:
+                batch_imgs = []
+                batch_meta = []
+                for _id, frame_id2, val in subjects:
+                    bbox = val['bbox'][frame_id2]
+                    cx, cy, scale = bbox
+                    norm_img, crop_img = process_image(img[..., ::-1], [cx, cy], scale, patch_h, patch_w)
+                    batch_imgs.append(norm_img)
+                    batch_meta.append((_id, frame_id2, bbox, val))
+
+                batch_tensor = torch.from_numpy(np.stack(batch_imgs)).to(self.device)
+                features = self._encode_batch(batch_tensor)
+
+                for idx, (feature, (_id, frame_id2, bbox, val)) in enumerate(zip(features, batch_meta)):
+                    tracking_results[_id]['features'].append(feature.unsqueeze(0))
+
+                init_indices = [idx for idx, (_, frame_id2, _, _) in enumerate(batch_meta) if frame_id2 == 0]
+                if init_indices:
+                    init_tensor = batch_tensor[init_indices]
+                    pred_global_orient, pred_body_pose, pred_betas = self._predict_init_batch(init_tensor)
+                    for out_idx, batch_idx in enumerate(init_indices):
+                        _id = batch_meta[batch_idx][0]
+                        tracking_results[_id]['init_global_orient'] = pred_global_orient[out_idx:out_idx + 1]
+                        tracking_results[_id]['init_body_pose'] = pred_body_pose[out_idx:out_idx + 1]
+                        tracking_results[_id]['init_betas'] = pred_betas[out_idx:out_idx + 1]
+
                 if self.flip_eval:
-                    flipped_bbox = flip_bbox(bbox, width, height)
-                    tracking_results[_id]['flipped_bbox'].append(flipped_bbox)
-                    
-                    keypoints = val['keypoints'][frame_id2]
-                    flipped_keypoints = flip_kp(keypoints, width)
-                    tracking_results[_id]['flipped_keypoints'].append(flipped_keypoints)
-                    
-                    flipped_features = self.model(torch.flip(norm_img, (3, )), encode=True)
-                    tracking_results[_id]['flipped_features'].append(flipped_features.cpu())
-                    
-                    if frame_id2 == 0:
-                        tracking_results = self.predict_init(torch.flip(norm_img, (3, )), tracking_results, _id, flip_eval=True)
+                    flipped_tensor = torch.flip(batch_tensor, (3,))
+                    flipped_features = self._encode_batch(flipped_tensor)
+
+                    for feature, (_id, frame_id2, bbox, val) in zip(flipped_features, batch_meta):
+                        tracking_results[_id]['flipped_features'].append(feature.unsqueeze(0))
+                        tracking_results[_id]['flipped_bbox'].append(flip_bbox(bbox, width, height))
+                        keypoints = val['keypoints'][frame_id2]
+                        tracking_results[_id]['flipped_keypoints'].append(flip_kp(keypoints, width))
+
+                    if init_indices:
+                        flipped_init_tensor = flipped_tensor[init_indices]
+                        pred_global_orient, pred_body_pose, pred_betas = self._predict_init_batch(flipped_init_tensor)
+                        for out_idx, batch_idx in enumerate(init_indices):
+                            _id = batch_meta[batch_idx][0]
+                            tracking_results[_id]['flipped_init_global_orient'] = pred_global_orient[out_idx:out_idx + 1]
+                            tracking_results[_id]['flipped_init_body_pose'] = pred_body_pose[out_idx:out_idx + 1]
+                            tracking_results[_id]['flipped_init_betas'] = pred_betas[out_idx:out_idx + 1]
                     
             bar.next()
             frame_id += 1

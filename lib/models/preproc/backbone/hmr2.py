@@ -69,9 +69,16 @@ class HMR2(nn.Module):
         return pred_smpl_params['global_orient'], pred_smpl_params['body_pose'], pred_smpl_params['betas'], pred_cam
     
     
+def _torch_load_compat(*args, **kwargs):
+    try:
+        return torch.load(*args, weights_only=False, **kwargs)
+    except TypeError:
+        return torch.load(*args, **kwargs)
+
+
 def hmr2(checkpoint_pth):
     model = HMR2()
     if os.path.exists(checkpoint_pth):
-        model.load_state_dict(torch.load(checkpoint_pth, map_location='cpu')['state_dict'], strict=False)
+        model.load_state_dict(_torch_load_compat(checkpoint_pth, map_location='cpu')['state_dict'], strict=False)
         print(f'Load backbone weight: {checkpoint_pth}')
     return model

@@ -50,6 +50,7 @@ class CustomDataset(torch.utils.data.Dataset):
         self.intrinsics = compute_cam_intrinsics(self.res)
         
         self.device = cfg.DEVICE.lower()
+        self.prefix = ''
         
         self.smpl = build_body_model('cpu')
         self.keypoints_normalizer = Normalizer(cfg)

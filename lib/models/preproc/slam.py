@@ -17,8 +17,27 @@ ROOT_DIR = osp.abspath(f"{__file__}/../../../../")
 DPVO_DIR = osp.join(ROOT_DIR, "third-party/DPVO")
 
 
+def _get_unsupported_runtime_reason():
+    if os.name != "nt" or not torch.cuda.is_available():
+        return None
+
+    device_props = torch.cuda.get_device_properties("cuda")
+    if device_props.major < 12:
+        return None
+
+    return (
+        "DPVO global SLAM is disabled on Windows for CUDA capability "
+        f"{device_props.major}.{device_props.minor}. "
+        "The bundled runtime is not stable on this configuration and can "
+        "terminate the interpreter without a Python traceback."
+    )
+
+
 class SLAMModel(object):
     def __init__(self, video, output_pth, width, height, calib=None, stride=1, skip=0, buffer=2048):
+        unsupported_reason = _get_unsupported_runtime_reason()
+        if unsupported_reason is not None:
+            raise RuntimeError(unsupported_reason)
         
         if calib == None or not osp.exists(calib): 
             calib = osp.join(output_pth, 'calib.txt')
