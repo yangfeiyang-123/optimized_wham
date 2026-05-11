@@ -53,6 +53,8 @@ def optimize_record(record: dict, config: LowerBodyOptimizerConfig) -> tuple[dic
         "ground_y": float(config.ground_y),
         "foot_clearance": float(config.foot_clearance),
         "foot_point_source": before_quality["foot_point_source"],
+        "root_shift_applied": bool(np.any(shift > 0.0)),
+        "root_shift_reason": _root_shift_reason(record, shift),
         "before": before_quality,
         "after": after_quality,
     }
@@ -118,6 +120,7 @@ def _quality_report(record: dict, config: LowerBodyOptimizerConfig) -> dict:
         contact = np.zeros(points.shape[:2], dtype=np.float32)
         contact_available = False
     else:
+        contact = _fit_contact_shape(contact, n_frames=points.shape[0], n_points=points.shape[1])
         contact_available = True
 
     return {
@@ -137,15 +140,18 @@ def _quality_report(record: dict, config: LowerBodyOptimizerConfig) -> dict:
 
 
 def _compute_frame_y_shift(record: dict, config: LowerBodyOptimizerConfig) -> np.ndarray:
+    if "trans_world" not in record:
+        return np.zeros(_frame_count(record), dtype=np.float32)
+
     foot_result = _safe_foot_points(record)
     if foot_result is None:
         return np.zeros(_frame_count(record), dtype=np.float32)
 
-    min_y = np.min(foot_result.points[:, :, 1], axis=1)
+    min_y = float(np.min(foot_result.points[:, :, 1]))
     target_y = float(config.ground_y) + float(config.foot_clearance)
-    required_shift = np.maximum(target_y - min_y, 0.0)
-    capped_shift = np.minimum(required_shift, max(float(config.max_root_y_shift), 0.0))
-    return capped_shift.astype(np.float32, copy=False)
+    required_shift = max(target_y - min_y, 0.0)
+    capped_shift = min(required_shift, max(float(config.max_root_y_shift), 0.0))
+    return np.full(_frame_count(record), capped_shift, dtype=np.float32)
 
 
 def _apply_frame_y_shift(record: dict, shift: np.ndarray) -> None:
@@ -167,6 +173,26 @@ def _apply_frame_y_shift(record: dict, shift: np.ndarray) -> None:
             n_frames = min(value.shape[0], shift.shape[0])
             value[:n_frames, :, 1] += shift[:n_frames, None]
             record[key] = value
+
+
+def _fit_contact_shape(contact: np.ndarray, *, n_frames: int, n_points: int) -> np.ndarray:
+    fitted = np.zeros((n_frames, n_points), dtype=np.float32)
+    contact = np.asarray(contact, dtype=np.float32)
+    if contact.ndim != 2 or contact.shape[0] == 0 or contact.shape[1] == 0:
+        return fitted
+
+    rows = min(n_frames, contact.shape[0])
+    cols = min(n_points, contact.shape[1])
+    fitted[:rows, :cols] = contact[:rows, :cols]
+    return fitted
+
+
+def _root_shift_reason(record: dict, shift: np.ndarray) -> str:
+    if "trans_world" not in record:
+        return "missing_trans_world"
+    if shift.size == 0 or not np.any(shift > 0.0):
+        return "no_shift_required"
+    return "applied"
 
 
 def _pose_delta_report(original: dict, optimized: dict) -> dict:

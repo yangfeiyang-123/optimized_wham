@@ -69,6 +69,39 @@ def test_optimize_record_without_feet_returns_sensible_reports():
     assert reports["validation_summary"]["checks"]["frame_count_unchanged"] is True
 
 
+def test_optimize_record_pads_short_contact_arrays_for_quality_metrics():
+    record = make_record()
+    record["contact"] = np.array([[1.0, 0.0], [1.0, 0.0]], dtype=np.float32)
+
+    out, reports = optimize_record(record, LowerBodyOptimizerConfig(fps=30.0))
+
+    assert out["feet_refined"].shape[0] == 4
+    assert reports["ground_contact_report"]["before"]["contact_available"] is True
+    assert "mean_contact_speed" in reports["ground_contact_report"]["after"]["sliding"]
+
+
+def test_optimize_record_validation_summary_succeeds_for_simple_record():
+    _, reports = optimize_record(make_record(), LowerBodyOptimizerConfig(fps=30.0))
+
+    assert reports["validation_summary"]["success"] is True
+    assert reports["validation_summary"]["checks"]["root_vertical_jitter_not_worse"] is True
+
+
+def test_optimize_record_without_trans_world_does_not_shift_cached_feet():
+    record = make_record()
+    original_feet = record["feet_refined"].copy()
+    del record["trans_world"]
+
+    out, reports = optimize_record(record, LowerBodyOptimizerConfig(fps=30.0))
+    lower_report = reports["lower_body_optimization_report"]
+
+    np.testing.assert_array_equal(out["feet_refined"], original_feet)
+    assert lower_report["max_applied_root_y_shift"] == 0.0
+    assert lower_report["mean_applied_root_y_shift"] == 0.0
+    assert lower_report["root_shift_applied"] is False
+    assert lower_report["root_shift_reason"] == "missing_trans_world"
+
+
 def test_optimize_record_caps_root_y_shift():
     record = make_record()
 
