@@ -18,10 +18,10 @@ def _not_worse_abs(candidate, baseline, tolerance):
     return candidate <= baseline + tolerance
 
 
-def _not_worse_ratio(candidate, baseline, ratio):
+def _not_worse_ratio(candidate, baseline, ratio, absolute_floor=1e-8):
     if candidate is None or baseline is None:
         return False
-    return candidate <= baseline * (1.0 + ratio)
+    return candidate <= baseline + max(abs(baseline) * ratio, absolute_floor)
 
 
 def _improved(candidate, baseline):
@@ -204,7 +204,7 @@ def select_stage7_result(
     accepted = all(checks.values())
 
     return {
-        "selected": candidate if accepted else baseline,
+        "selected": "candidate" if accepted else "baseline",
         "accepted": accepted,
         "checks": checks,
         "target_improvements": target_improvements,

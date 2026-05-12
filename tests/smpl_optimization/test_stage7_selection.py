@@ -65,7 +65,7 @@ def test_accepts_candidate_when_smoother_and_gates_pass():
 
     result = select_stage7_result(baseline, candidate)
 
-    assert result["selected"] is candidate
+    assert result["selected"] == "candidate"
     assert result["accepted"]
     assert result["checks"]["at_least_one_smoothness_metric_improved"]
     assert result["target_improvements"]["whole_body_pose_jerk_improved"]
@@ -78,7 +78,7 @@ def test_rejects_candidate_when_penetration_worse():
 
     result = select_stage7_result(baseline, candidate)
 
-    assert result["selected"] is baseline
+    assert result["selected"] == "baseline"
     assert not result["accepted"]
     assert not result["checks"]["smpl_max_foot_penetration_not_worse"]
 
@@ -89,7 +89,7 @@ def test_rejects_candidate_without_smoothness_improvement():
 
     result = select_stage7_result(baseline, candidate)
 
-    assert result["selected"] is baseline
+    assert result["selected"] == "baseline"
     assert not result["accepted"]
     assert not result["checks"]["at_least_one_smoothness_metric_improved"]
     assert not any(result["target_improvements"].values())
@@ -103,7 +103,7 @@ def test_missing_required_numbers_fail_closed():
 
     result = select_stage7_result(baseline, candidate)
 
-    assert result["selected"] is baseline
+    assert result["selected"] == "baseline"
     assert not result["accepted"]
     assert not result["checks"]["opensim_mean_rms_not_worse"]
     assert not result["checks"]["lower_body_pose_delta_small"]
@@ -117,7 +117,7 @@ def test_missing_plan_shaped_smoothness_value_fails_closed():
 
     result = select_stage7_result(baseline, candidate)
 
-    assert result["selected"] is baseline
+    assert result["selected"] == "baseline"
     assert not result["accepted"]
     assert not result["target_improvements"]["whole_body_pose_jerk_improved"]
     assert not result["checks"]["at_least_one_smoothness_metric_improved"]
@@ -215,6 +215,28 @@ def test_accepts_plan_shaped_summary_when_pose_jerk_improves():
 
     result = select_stage7_result(baseline, candidate)
 
-    assert result["selected"] is candidate
+    assert result["selected"] == "candidate"
     assert result["accepted"]
     assert result["target_improvements"]["whole_body_pose_jerk_improved"]
+
+
+def test_zero_baseline_ratio_gate_allows_tiny_absolute_regression():
+    baseline = _summary(sliding_mean=0.0, whole_body_jerk=0.8)
+    candidate = _summary(sliding_mean=5e-9, whole_body_jerk=0.6)
+
+    result = select_stage7_result(baseline, candidate)
+
+    assert result["selected"] == "candidate"
+    assert result["accepted"]
+    assert result["checks"]["smpl_contact_sliding_mean_not_worse"]
+
+
+def test_zero_baseline_ratio_gate_rejects_large_absolute_regression():
+    baseline = _summary(sliding_mean=0.0, whole_body_jerk=0.8)
+    candidate = _summary(sliding_mean=1e-4, whole_body_jerk=0.6)
+
+    result = select_stage7_result(baseline, candidate)
+
+    assert result["selected"] == "baseline"
+    assert not result["accepted"]
+    assert not result["checks"]["smpl_contact_sliding_mean_not_worse"]
