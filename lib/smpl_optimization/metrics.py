@@ -104,3 +104,37 @@ def pose_delta_max_abs(original_pose, corrected_pose):
             )
         )
     )
+
+
+def temporal_derivative_summary(values, order=1):
+    values = np.asarray(values, dtype=np.float64)
+    if values.size == 0 or values.shape[0] <= int(order):
+        return {"rms": 0.0, "max_abs": 0.0}
+
+    flat = values.reshape(values.shape[0], -1)
+    derivative = np.diff(flat, n=int(order), axis=0)
+    if derivative.size == 0:
+        return {"rms": 0.0, "max_abs": 0.0}
+
+    return {
+        "rms": _clean_float(np.sqrt(np.mean(derivative**2))),
+        "max_abs": _clean_float(np.max(np.abs(derivative))),
+    }
+
+
+def pose_smoothness(pose):
+    pose = np.asarray(pose)
+    return {
+        "velocity": temporal_derivative_summary(pose, order=1),
+        "acceleration": temporal_derivative_summary(pose, order=2),
+        "jerk": temporal_derivative_summary(pose, order=3),
+    }
+
+
+def root_translation_smoothness(trans):
+    trans = np.asarray(trans)
+    return {
+        "velocity": temporal_derivative_summary(trans, order=1),
+        "acceleration": temporal_derivative_summary(trans, order=2),
+        "jerk": temporal_derivative_summary(trans, order=3),
+    }
