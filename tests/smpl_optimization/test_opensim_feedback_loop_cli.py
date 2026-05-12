@@ -8,6 +8,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from scripts.opensim_feedback_loop import (  # noqa: E402
+    build_parser,
     build_lower_body_cmd,
     build_retarget_cmd,
     iter_paths,
@@ -90,3 +91,27 @@ def test_retarget_cmd_omits_free_root_when_false(tmp_path):
     assert "--run-ik" in cmd
     assert "--opensim-log" in cmd
     assert "--free-root" not in cmd
+
+
+def test_parser_defaults_to_free_root():
+    args = build_parser().parse_args(
+        ["--input-pkl", "input.pkl", "--out-dir", "out", "--fps", "60"]
+    )
+
+    assert args.free_root is True
+
+
+def test_parser_can_disable_free_root_with_fix_root():
+    args = build_parser().parse_args(
+        [
+            "--input-pkl",
+            "input.pkl",
+            "--out-dir",
+            "out",
+            "--fps",
+            "60",
+            "--fix-root",
+        ]
+    )
+
+    assert args.free_root is False

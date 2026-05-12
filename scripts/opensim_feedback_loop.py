@@ -186,7 +186,7 @@ def build_summary(smpl_pkl: Path, report_dir: Path, ik_log: Path, track_id: str)
     }
 
 
-def parse_args() -> argparse.Namespace:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Run Stage6 OpenSim feedback loop.")
     parser.add_argument("--input-pkl", required=True)
     parser.add_argument("--out-dir", required=True)
@@ -218,8 +218,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--root-calib-frames", type=int, default=10)
     parser.add_argument("--opensim-cmd", default=None)
     parser.add_argument("--ik-accuracy", type=float, default=1e-4)
-    parser.add_argument("--free-root", action="store_true", default=True)
+    parser.add_argument("--free-root", dest="free_root", action="store_true", default=True)
+    parser.add_argument("--fix-root", dest="free_root", action="store_false")
     parser.add_argument("--rms-threshold", type=float, default=0.08)
+    return parser
+
+
+def parse_args() -> argparse.Namespace:
+    parser = build_parser()
     return parser.parse_args()
 
 
@@ -280,6 +286,7 @@ def main() -> int:
         candidate,
         root_y_budget=args.max_root_y_shift,
     )
+    selection["feedback"] = to_jsonable(feedback_report)
     selected_source = (
         paths["iter_01_smpl"] if selection["selected"] == "iter_01" else paths["iter_00_smpl"]
     )
