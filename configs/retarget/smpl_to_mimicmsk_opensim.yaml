@@ -1,0 +1,246 @@
+version: 1
+name: smpl_to_mimicmsk_opensim_17pt
+description: >
+  SMPL to MimicMSK OpenSim retarget map following the 17 standard
+  MuscleMimic MyoFullBody site_joint_matches.
+
+references:
+  musclemimic_robot_conf: ../../../musclemimic/loco_mujoco/smpl/robot_confs/MyoFullBody.yaml
+  opensim_model: ../../../MimicMSK_Model_opensim/MimicMSK_OpenSim.osim
+  opensim_mujoco_mapping: ../../../MimicMSK_Model_opensim/model_mapping.yaml
+  opensim_name_mapping: ../../../MimicMSK_Model_opensim/name_mapping.csv
+
+conventions:
+  length_unit: meter
+  angle_unit: radian
+  smpl_source: WHAM fixed-beta SMPL sequence
+  opensim_world_up_axis: y
+  mujoco_world_up_axis: z
+  frame_alignment_source: references.opensim_mujoco_mapping
+  root_policy: fixed_from_wham
+
+root_policy:
+  root_fixed: true
+  optimize_root_translation: false
+  optimize_root_rotation: false
+  use_pelvis_as_consistency_anchor: true
+
+retarget_points:
+  - key: pelvis
+    smpl_joint: Pelvis
+    mujoco_site: pelvis_mimic
+    target_type: opensim_marker
+    opensim_marker: pelvis
+    role: root_anchor
+    position_weight: 0.2
+    rotation_weight: 1.0
+    optimize_target: false
+
+  - key: head
+    smpl_joint: Head
+    mujoco_site: head_mimic
+    target_type: opensim_body_origin
+    opensim_body: head
+    role: upper_body_context
+    position_weight: 0.5
+    rotation_weight: 1.0
+    optimize_target: false
+    note: OpenSim model has a head body but no direct head_mimic marker.
+
+  - key: upper_body
+    smpl_joint: Spine
+    mujoco_site: upper_body_mimic
+    target_type: average_opensim_markers
+    opensim_markers:
+      - Chest_r_sidesite
+      - Chest_l_sidesite
+    role: upper_body_context
+    position_weight: 0.5
+    rotation_weight: 1.0
+    optimize_target: false
+
+  - key: left_shoulder
+    smpl_joint: L_Shoulder
+    mujoco_site: left_shoulder_mimic
+    target_type: opensim_marker
+    opensim_marker: LeftShoulder
+    role: upper_limb_context
+    position_weight: 0.3
+    rotation_weight: 0.5
+    optimize_target: false
+
+  - key: left_elbow
+    smpl_joint: L_Elbow
+    mujoco_site: left_elbow_mimic
+    target_type: opensim_marker
+    opensim_marker: R_Elbow_Lateral_marker_left
+    role: upper_limb_context
+    position_weight: 0.3
+    rotation_weight: 1.0
+    optimize_target: false
+
+  - key: left_hand
+    smpl_joint: L_Wrist
+    mujoco_site: left_hand_mimic
+    target_type: opensim_marker
+    opensim_marker: s_wrist_l
+    role: upper_limb_context
+    position_weight: 0.3
+    rotation_weight: 1.0
+    optimize_target: false
+
+  - key: right_shoulder
+    smpl_joint: R_Shoulder
+    mujoco_site: right_shoulder_mimic
+    target_type: opensim_marker
+    opensim_marker: RightShoulder
+    role: upper_limb_context
+    position_weight: 0.3
+    rotation_weight: 0.5
+    optimize_target: false
+
+  - key: right_elbow
+    smpl_joint: R_Elbow
+    mujoco_site: right_elbow_mimic
+    target_type: opensim_marker
+    opensim_marker: R_Elbow_Lateral_marker
+    role: upper_limb_context
+    position_weight: 0.3
+    rotation_weight: 1.0
+    optimize_target: false
+
+  - key: right_hand
+    smpl_joint: R_Wrist
+    mujoco_site: right_hand_mimic
+    target_type: opensim_marker
+    opensim_marker: s_wrist_r
+    role: upper_limb_context
+    position_weight: 0.3
+    rotation_weight: 1.0
+    optimize_target: false
+
+  - key: left_hip
+    smpl_joint: L_Hip
+    mujoco_site: left_hip_mimic
+    target_type: opensim_marker
+    opensim_marker: hip_l
+    role: lower_body
+    position_weight: 1.0
+    rotation_weight: 1.0
+    optimize_target: true
+
+  - key: left_knee
+    smpl_joint: L_Knee
+    mujoco_site: left_knee_mimic
+    target_type: opensim_marker
+    opensim_marker: knee_l
+    role: lower_body
+    position_weight: 1.0
+    rotation_weight: 1.0
+    optimize_target: true
+
+  - key: left_ankle
+    smpl_joint: L_Ankle
+    mujoco_site: left_ankle_mimic
+    target_type: opensim_marker
+    opensim_marker: ankle_l
+    role: lower_body
+    position_weight: 1.0
+    rotation_weight: 1.0
+    optimize_target: true
+
+  - key: left_toe
+    smpl_joint: L_Toe
+    mujoco_site: left_toes_mimic
+    target_type: opensim_marker
+    opensim_marker: LTOE
+    auxiliary_opensim_markers:
+      - toe_l
+      - l_foot_touch
+    role: foot_contact
+    position_weight: 1.2
+    rotation_weight: 1.0
+    optimize_target: true
+
+  - key: right_hip
+    smpl_joint: R_Hip
+    mujoco_site: right_hip_mimic
+    target_type: opensim_marker
+    opensim_marker: hip_r
+    role: lower_body
+    position_weight: 1.0
+    rotation_weight: 1.0
+    optimize_target: true
+
+  - key: right_knee
+    smpl_joint: R_Knee
+    mujoco_site: right_knee_mimic
+    target_type: opensim_marker
+    opensim_marker: knee_r
+    role: lower_body
+    position_weight: 1.0
+    rotation_weight: 1.0
+    optimize_target: true
+
+  - key: right_ankle
+    smpl_joint: R_Ankle
+    mujoco_site: right_ankle_mimic
+    target_type: opensim_marker
+    opensim_marker: ankle_r
+    role: lower_body
+    position_weight: 1.0
+    rotation_weight: 1.0
+    optimize_target: true
+
+  - key: right_toe
+    smpl_joint: R_Toe
+    mujoco_site: right_toes_mimic
+    target_type: opensim_marker
+    opensim_marker: RTOE
+    auxiliary_opensim_markers:
+      - toe_r
+      - r_foot_touch
+    role: foot_contact
+    position_weight: 1.2
+    rotation_weight: 1.0
+    optimize_target: true
+
+optimizable_coordinates:
+  lower_body:
+    left:
+      - hip_flexion_l
+      - hip_adduction_l
+      - hip_rotation_l
+      - knee_angle_l
+      - ankle_angle_l
+      - subtalar_angle_l
+      - mtp_angle_l
+    right:
+      - hip_flexion_r
+      - hip_adduction_r
+      - hip_rotation_r
+      - knee_angle_r
+      - ankle_angle_r
+      - subtalar_angle_r
+      - mtp_angle_r
+
+fixed_coordinates:
+  root:
+    - root_tx
+    - root_ty
+    - root_tz
+    - root_rx
+    - root_ry
+    - root_rz
+
+calibration:
+  use_fixed_beta: true
+  use_subject_scale: true
+  solve_marker_offsets: true
+  offset_space: opensim_local_target
+  preserve_wham_root_world_trajectory: true
+
+quality_checks:
+  expected_retarget_point_count: 17
+  fail_on_missing_opensim_target: true
+  fail_on_missing_coordinate: true
