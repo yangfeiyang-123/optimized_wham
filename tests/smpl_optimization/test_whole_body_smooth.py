@@ -25,6 +25,7 @@ def test_default_bounds_do_not_exceed_stage7_selector_gates():
     config = WholeBodySmoothConfig()
 
     assert config.max_lower_body_delta <= 0.05
+    assert config.max_whole_body_delta <= 0.15
     assert config.max_root_delta <= 0.03
     assert config.max_root_vertical_delta <= 0.015
 
