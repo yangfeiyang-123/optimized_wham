@@ -180,7 +180,12 @@ def _sliding(record: dict, fps: float) -> tuple[dict, bool]:
 
     points = foot_points.points
     contact = get_record_contact(record, points.shape[0], points.shape[1])
-    if contact is None:
+    if (
+        contact is None
+        or contact.ndim != 2
+        or contact.shape[0] != points.shape[0]
+        or contact.shape[1] != points.shape[1]
+    ):
         return {
             "mean_contact_speed": None,
             "max_contact_speed": None,

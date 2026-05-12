@@ -138,3 +138,20 @@ def test_summarize_smpl_fails_closed_when_sliding_inputs_missing():
     assert summary["sliding_available"] is False
     assert summary["sliding"]["mean_contact_speed"] is None
     assert summary["sliding"]["max_contact_speed"] is None
+
+
+def test_summarize_smpl_fails_closed_when_contact_is_partial():
+    record = {
+        "pose": np.zeros((3, 72), dtype=np.float32),
+        "trans": np.zeros((3, 3), dtype=np.float32),
+        "betas": np.zeros((3, 10), dtype=np.float32),
+        "feet_world": np.zeros((3, 2, 3), dtype=np.float32),
+        "contact": np.ones((2, 2), dtype=np.float32),
+    }
+
+    summary = summarize_smpl(record, fps=10.0)
+
+    assert summary["sliding_available"] is False
+    assert summary["sliding"]["mean_contact_speed"] is None
+    assert summary["sliding"]["max_contact_speed"] is None
+    assert summary["sliding"]["num_sliding"] is None
