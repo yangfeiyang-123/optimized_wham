@@ -101,15 +101,22 @@ def parse_ik_log_metrics(path: Path) -> dict:
     }
 
 
-def _apply_smoothed_weight(weights, frame, min_weight, max_weight, smooth_radius):
+def _weight_from_rms(rms, rms_threshold, min_weight, max_weight):
+    if rms_threshold <= 0:
+        return max_weight
+    severity = max(0.0, (float(rms) / float(rms_threshold)) - 1.0)
+    return min(max_weight, min_weight + (max_weight - min_weight) * severity)
+
+
+def _apply_smoothed_weight(weights, frame, min_weight, center_weight, smooth_radius):
     if smooth_radius <= 0:
-        weights[frame] = max(weights[frame], max_weight)
+        weights[frame] = max(weights[frame], center_weight)
         return
 
     start = max(0, frame - smooth_radius)
     stop = min(len(weights) - 1, frame + smooth_radius)
     span = smooth_radius + 1
-    amplitude = max_weight - min_weight
+    amplitude = center_weight - min_weight
     for index in range(start, stop + 1):
         distance = abs(index - frame)
         factor = (span - distance) / span
@@ -143,7 +150,13 @@ def build_feedback_weights(
 
         marker_class = classify_marker(frame_metrics.get("max_marker", ""))
         if marker_class == "lower_body":
-            _apply_smoothed_weight(weights, frame, min_weight, max_weight, smooth_radius)
+            center_weight = _weight_from_rms(
+                frame_metrics.get("rms", 0.0),
+                rms_threshold,
+                min_weight,
+                max_weight,
+            )
+            _apply_smoothed_weight(weights, frame, min_weight, center_weight, smooth_radius)
             num_weighted_frames += 1
         elif marker_class == "non_lower_body":
             ignored_non_lower_body_frames.append(frame)

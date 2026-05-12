@@ -63,6 +63,33 @@ def test_build_feedback_weights_ignores_non_lower_body_marker_spikes():
     assert result["ignored_non_lower_body_frames"] == [0]
 
 
+def test_build_feedback_weights_scales_near_threshold_errors():
+    metrics = {
+        "frames": [
+            {"frame": 1, "rms": 0.081, "max": 0.10, "max_marker": "ankle_l"},
+        ]
+    }
+
+    result = build_feedback_weights(metrics, num_frames=3, rms_threshold=0.08, smooth_radius=0)
+
+    assert 1.0 < result["weights"][1] < 2.5
+
+
+def test_build_feedback_weights_smooths_from_scaled_center_weight():
+    metrics = {
+        "frames": [
+            {"frame": 2, "rms": 0.081, "max": 0.10, "max_marker": "ankle_l"},
+        ]
+    }
+
+    result = build_feedback_weights(metrics, num_frames=5, rms_threshold=0.08, smooth_radius=1)
+
+    weights = result["weights"]
+    assert 1.0 < weights[2] < 2.5
+    assert 1.0 < weights[1] < weights[2]
+    assert 1.0 < weights[3] < weights[2]
+
+
 def test_build_feedback_weights_smooths_lower_body_windows():
     metrics = {
         "frames": [
