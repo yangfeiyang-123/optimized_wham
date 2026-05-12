@@ -50,14 +50,16 @@ def parse_mot(path) -> dict:
             continue
 
         values = stripped.split()
+        if len(values) != len(columns):
+            rows.append([np.nan] * len(columns))
+            continue
+
         row = []
-        for value in values[: len(columns)]:
+        for value in values:
             try:
                 row.append(float(value))
             except ValueError:
                 row.append(np.nan)
-        if len(row) < len(columns):
-            row.extend([np.nan] * (len(columns) - len(row)))
         rows.append(row)
 
     if not columns:
@@ -101,7 +103,7 @@ def summarize_mot_coordinates(
         return _empty_summary(finite=np.all(np.isfinite(data)))
 
     coordinates = data[:, coordinate_indexes]
-    finite = bool(np.all(np.isfinite(coordinates)))
+    finite = bool(np.isfinite(data).all())
     ranges = DEFAULT_COORDINATE_RANGES if coordinate_ranges is None else coordinate_ranges
 
     num_range_violations = 0
