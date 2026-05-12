@@ -9,9 +9,11 @@ if str(REPO_ROOT) not in sys.path:
 
 from scripts.run_wham_ablation import (  # noqa: E402
     STAGES,
+    active_stages,
     build_demo_cmd,
     build_lower_body_cmd,
     build_opensim_feedback_cmd,
+    build_whole_body_smooth_cmd,
     safe_ascii_name,
     write_metrics_csv,
 )
@@ -25,6 +27,24 @@ def test_ablation_stage_ids_are_expected():
         "03_root_y_only",
         "04_lower_body_full",
         "05_opensim_feedback",
+    ]
+
+
+def test_active_stages_adds_whole_body_smooth_without_stage6():
+    stages = active_stages(run_opensim_feedback_loop=False, run_whole_body_smooth=True)
+
+    assert [stage["id"] for stage in stages][-2:] == [
+        "04_lower_body_full",
+        "05_whole_body_smooth",
+    ]
+
+
+def test_active_stages_adds_whole_body_smooth_after_stage6():
+    stages = active_stages(run_opensim_feedback_loop=True, run_whole_body_smooth=True)
+
+    assert [stage["id"] for stage in stages][-2:] == [
+        "05_opensim_feedback",
+        "06_whole_body_smooth",
     ]
 
 
@@ -86,6 +106,19 @@ def make_opensim_feedback_args(*, free_root: bool) -> argparse.Namespace:
         ik_accuracy=1e-5,
         free_root=free_root,
     )
+
+
+def test_whole_body_smooth_command_uses_previous_stage_pkl_and_free_root(tmp_path):
+    args = make_opensim_feedback_args(free_root=True)
+    input_pkl = tmp_path / "previous_stage.pkl"
+    out_dir = tmp_path / "06_whole_body_smooth"
+
+    cmd = build_whole_body_smooth_cmd(args, input_pkl, out_dir)
+
+    assert cmd[:2] == [sys.executable, "scripts/whole_body_smoothness_optimizer.py"]
+    assert cmd[cmd.index("--input-pkl") + 1] == str(input_pkl)
+    assert cmd[cmd.index("--out-dir") + 1] == str(out_dir)
+    assert "--free-root" in cmd
 
 
 def test_opensim_feedback_command_uses_world_pkl_and_fixed_root_by_default(tmp_path):

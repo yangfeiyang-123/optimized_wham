@@ -61,6 +61,18 @@ STAGES = [
 ]
 
 
+def active_stages(*, run_opensim_feedback_loop: bool, run_whole_body_smooth: bool) -> list[dict[str, str]]:
+    stages = [stage for stage in STAGES if stage["id"] != "05_opensim_feedback" or run_opensim_feedback_loop]
+    if run_whole_body_smooth:
+        stages.append(
+            {
+                "id": f"{len(stages):02d}_whole_body_smooth",
+                "description": "Conservative whole-body smoothness selected SMPL.",
+            }
+        )
+    return stages
+
+
 METRIC_FIELDS = [
     "stage_id",
     "description",
@@ -282,6 +294,42 @@ def build_opensim_feedback_cmd(args: argparse.Namespace, input_pkl: Path, out_di
     return cmd
 
 
+def build_whole_body_smooth_cmd(args: argparse.Namespace, input_pkl: Path, out_dir: Path) -> list[str]:
+    cmd = [
+        sys.executable,
+        "scripts/whole_body_smoothness_optimizer.py",
+        "--input-pkl",
+        str(input_pkl),
+        "--out-dir",
+        str(out_dir),
+        "--fps",
+        str(args.fps),
+        "--track-id",
+        str(args.track_id),
+        "--device",
+        args.device,
+        "--chunk-size",
+        str(args.chunk_size),
+        "--retarget-config",
+        args.retarget_config,
+        "--alignment",
+        args.alignment,
+        "--axis-conversion",
+        args.axis_conversion,
+        "--root-calibration",
+        args.root_calibration,
+        "--root-calib-frames",
+        str(args.root_calib_frames),
+        "--ik-accuracy",
+        str(args.ik_accuracy),
+    ]
+    if args.opensim_cmd:
+        cmd += ["--opensim-cmd", args.opensim_cmd]
+    if args.free_root:
+        cmd.append("--free-root")
+    return cmd
+
+
 def frame_count(record: dict) -> int:
     for key in ("trans_world", "pose_world", "pose", "betas", "feet_refined", "feet_world", "feet", "verts"):
         value = record.get(key)
@@ -452,6 +500,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--run-ik", action="store_true")
     parser.add_argument("--skip-retarget", action="store_true")
     parser.add_argument("--run-opensim-feedback-loop", action="store_true")
+    parser.add_argument("--run-whole-body-smooth", action="store_true")
     return parser.parse_args()
 
 
@@ -499,22 +548,30 @@ def main() -> int:
     if args.run_opensim_feedback_loop:
         stage_pkls["05_opensim_feedback"] = feedback_pkl
 
+    if args.run_whole_body_smooth:
+        smooth_stage_id = "06_whole_body_smooth" if args.run_opensim_feedback_loop else "05_whole_body_smooth"
+        smooth_dir = ablation_root / smooth_stage_id
+        smooth_input_pkl = feedback_pkl if args.run_opensim_feedback_loop else lower_body_pkl
+        run(build_whole_body_smooth_cmd(args, smooth_input_pkl, smooth_dir))
+        stage_pkls[smooth_stage_id] = smooth_dir / "selected_smooth_smpl.pkl"
+
+    stages = active_stages(
+        run_opensim_feedback_loop=args.run_opensim_feedback_loop,
+        run_whole_body_smooth=args.run_whole_body_smooth,
+    )
+
     retarget_dirs: dict[str, Path] = {}
     if not args.skip_retarget:
-        for stage in STAGES:
+        for stage in stages:
             stage_id = stage["id"]
-            if stage_id == "05_opensim_feedback" and not args.run_opensim_feedback_loop:
-                continue
             retarget_dir = ablation_root / stage_id / "opensim_retarget"
             retarget_dirs[stage_id] = retarget_dir
             run(build_retarget_cmd(args, stage_pkls[stage_id], retarget_dir))
 
     _, baseline_record = select_record(raw_pkl, args.track_id)
     rows = []
-    for stage in STAGES:
+    for stage in stages:
         stage_id = stage["id"]
-        if stage_id == "05_opensim_feedback" and not args.run_opensim_feedback_loop:
-            continue
         rows.append(
             compute_metrics(
                 stage,
@@ -530,7 +587,7 @@ def main() -> int:
         "video": str(video),
         "output_root": str(output_root),
         "ablation_root": str(ablation_root),
-        "stages": STAGES,
+        "stages": stages,
         "metrics": rows,
     }
     metrics_csv = ablation_root / "ablation_metrics.csv"
