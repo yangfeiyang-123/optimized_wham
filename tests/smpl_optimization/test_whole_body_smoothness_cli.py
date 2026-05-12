@@ -2,6 +2,8 @@ import argparse
 import sys
 from pathlib import Path
 
+import numpy as np
+
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
@@ -11,6 +13,7 @@ from scripts.whole_body_smoothness_optimizer import (  # noqa: E402
     build_retarget_cmd,
     find_opensim_mot,
     stage7_paths,
+    summarize_smpl,
 )
 
 
@@ -87,3 +90,51 @@ def test_find_opensim_mot_raises_when_no_mot_exists(tmp_path):
         assert str(tmp_path) in str(exc)
     else:
         raise AssertionError("Expected FileNotFoundError")
+
+
+def test_find_opensim_mot_rejects_root_motion_without_ik(tmp_path):
+    (tmp_path / "wham_fixed_root.mot").write_text("root", encoding="utf-8")
+
+    try:
+        find_opensim_mot(tmp_path)
+    except FileNotFoundError as exc:
+        assert "opensim_ik.mot" in str(exc)
+    else:
+        raise AssertionError("Expected FileNotFoundError")
+
+
+def test_summarize_smpl_uses_contact_sliding_when_available():
+    record = {
+        "pose": np.zeros((3, 72), dtype=np.float32),
+        "trans": np.zeros((3, 3), dtype=np.float32),
+        "betas": np.zeros((3, 10), dtype=np.float32),
+        "feet_world": np.asarray(
+            [
+                [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]],
+                [[0.1, 0.0, 0.0], [0.0, 0.0, 0.0]],
+                [[0.3, 0.0, 0.0], [0.0, 0.0, 0.0]],
+            ],
+            dtype=np.float32,
+        ),
+        "contact": np.ones((3, 2), dtype=np.float32),
+    }
+
+    summary = summarize_smpl(record, fps=10.0)
+
+    assert summary["sliding_available"] is True
+    assert summary["sliding"]["mean_contact_speed"] > 0.0
+    assert summary["sliding"]["max_contact_speed"] > 0.0
+
+
+def test_summarize_smpl_fails_closed_when_sliding_inputs_missing():
+    record = {
+        "pose": np.zeros((3, 72), dtype=np.float32),
+        "trans": np.zeros((3, 3), dtype=np.float32),
+        "betas": np.zeros((3, 10), dtype=np.float32),
+    }
+
+    summary = summarize_smpl(record, fps=10.0)
+
+    assert summary["sliding_available"] is False
+    assert summary["sliding"]["mean_contact_speed"] is None
+    assert summary["sliding"]["max_contact_speed"] is None

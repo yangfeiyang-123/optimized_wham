@@ -19,6 +19,7 @@ if str(REPO_ROOT) not in sys.path:
 
 from lib.smpl_optimization.metrics import (  # noqa: E402
     beta_variation_max_abs,
+    contact_foot_sliding,
     foot_penetration_depth,
     pose_smoothness,
     root_translation_smoothness,
@@ -30,6 +31,10 @@ from lib.smpl_optimization.stage7_selection import select_stage7_result  # noqa:
 from lib.smpl_optimization.whole_body_smooth import (  # noqa: E402
     WholeBodySmoothConfig,
     smooth_record,
+)
+from lib.world_grounded.foot_points import (  # noqa: E402
+    get_record_contact,
+    get_record_foot_points,
 )
 from lib.world_grounded.tracks import select_track, to_numpy  # noqa: E402
 
@@ -163,18 +168,37 @@ def _penetration(record: dict) -> dict:
     return foot_penetration_depth(np.asarray([], dtype=np.float32))
 
 
-def summarize_smpl(record: dict, smooth_report: dict | None = None) -> dict:
+def _sliding(record: dict, fps: float) -> tuple[dict, bool]:
+    try:
+        foot_points = get_record_foot_points(record)
+    except ValueError:
+        return {
+            "mean_contact_speed": None,
+            "max_contact_speed": None,
+            "num_sliding": None,
+        }, False
+
+    points = foot_points.points
+    contact = get_record_contact(record, points.shape[0], points.shape[1])
+    if contact is None:
+        return {
+            "mean_contact_speed": None,
+            "max_contact_speed": None,
+            "num_sliding": None,
+        }, False
+    return contact_foot_sliding(points, contact, fps), True
+
+
+def summarize_smpl(record: dict, fps: float, smooth_report: dict | None = None) -> dict:
+    sliding, sliding_available = _sliding(record, fps)
     summary = {
         "beta_variation_after_max_abs": beta_variation_max_abs(
             record.get("betas", np.asarray([]))
         ),
         "frames": _record_frames(record),
         "penetration": _penetration(record),
-        "sliding": {
-            "mean_contact_speed": 0.0,
-            "max_contact_speed": 0.0,
-            "num_sliding": 0,
-        },
+        "sliding": sliding,
+        "sliding_available": sliding_available,
         "pose_delta": _zero_pose_delta(),
         "root_delta": _zero_root_delta(),
         "pose_smoothness": pose_smoothness(_record_pose(record)),
@@ -197,10 +221,7 @@ def find_opensim_mot(opensim_dir: Path) -> Path:
     preferred = opensim_dir / "opensim_ik.mot"
     if preferred.exists():
         return preferred
-    candidates = sorted(opensim_dir.glob("*.mot"))
-    if candidates:
-        return candidates[0]
-    raise FileNotFoundError(f"No .mot file found in {opensim_dir}")
+    raise FileNotFoundError(f"Required opensim_ik.mot not found in {opensim_dir}")
 
 
 def _opensim_summary(log_path: Path, opensim_dir: Path) -> dict:
@@ -300,11 +321,11 @@ def main() -> int:
     )
 
     baseline = {
-        "smpl": summarize_smpl(record),
+        "smpl": summarize_smpl(record, args.fps),
         "opensim": _opensim_summary(paths["baseline_log"], paths["baseline_opensim"]),
     }
     candidate = {
-        "smpl": summarize_smpl(candidate_record, smooth_report),
+        "smpl": summarize_smpl(candidate_record, args.fps, smooth_report),
         "opensim": _opensim_summary(
             paths["candidate_log"], paths["candidate_opensim"]
         ),
