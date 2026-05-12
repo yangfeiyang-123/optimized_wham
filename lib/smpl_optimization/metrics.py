@@ -108,6 +108,8 @@ def pose_delta_max_abs(original_pose, corrected_pose):
 
 def temporal_derivative_summary(values, order=1):
     values = np.asarray(values, dtype=np.float64)
+    if values.ndim == 1:
+        values = values.reshape(1, -1)
     if values.size == 0 or values.shape[0] <= int(order):
         return {"rms": 0.0, "max_abs": 0.0}
 

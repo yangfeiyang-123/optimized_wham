@@ -30,3 +30,17 @@ def test_root_translation_smoothness_handles_short_sequences():
     assert report["velocity"]["rms"] == 0.0
     assert report["acceleration"]["rms"] == 0.0
     assert report["jerk"]["rms"] == 0.0
+
+
+def test_pose_smoothness_treats_1d_pose_as_single_frame():
+    report = pose_smoothness(np.arange(72.0))
+    assert report["velocity"]["rms"] == 0.0
+    assert report["acceleration"]["rms"] == 0.0
+    assert report["jerk"]["rms"] == 0.0
+
+
+def test_root_translation_smoothness_treats_1d_translation_as_single_frame():
+    report = root_translation_smoothness(np.array([0.0, 1.0, 3.0]))
+    assert report["velocity"]["rms"] == 0.0
+    assert report["acceleration"]["rms"] == 0.0
+    assert report["jerk"]["rms"] == 0.0
