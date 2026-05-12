@@ -179,6 +179,18 @@ def _sliding(record: dict, fps: float) -> tuple[dict, bool]:
         }, False
 
     points = foot_points.points
+    raw_contact = np.asarray(record["contact"]) if "contact" in record else None
+    if (
+        raw_contact is None
+        or raw_contact.ndim != 2
+        or raw_contact.shape != (points.shape[0], points.shape[1])
+    ):
+        return {
+            "mean_contact_speed": None,
+            "max_contact_speed": None,
+            "num_sliding": None,
+        }, False
+
     contact = get_record_contact(record, points.shape[0], points.shape[1])
     if (
         contact is None
