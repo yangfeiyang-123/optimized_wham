@@ -37,6 +37,8 @@ def test_stage7_paths_are_named_for_whole_body_smoothness(tmp_path):
     assert paths["baseline_smpl"].name == "baseline_smpl.pkl"
     assert paths["candidate_smpl"].name == "smooth_candidate_smpl.pkl"
     assert paths["selected_smpl"].name == "selected_smooth_smpl.pkl"
+    assert paths["baseline_opensim"].name == "baseline_opensim"
+    assert paths["candidate_opensim"].name == "candidate_opensim"
     assert paths["report"].name == "stage7_smoothness_report.json"
 
 

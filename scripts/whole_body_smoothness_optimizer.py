@@ -48,8 +48,8 @@ def stage7_paths(out_dir: Path) -> dict[str, Path]:
         "selected_smpl": out_dir / "selected_smooth_smpl.pkl",
         "baseline_opensim": out_dir / "baseline_opensim",
         "baseline_log": out_dir / "baseline_opensim" / "opensim_ik.log",
-        "candidate_opensim": out_dir / "smooth_candidate_opensim",
-        "candidate_log": out_dir / "smooth_candidate_opensim" / "opensim_ik.log",
+        "candidate_opensim": out_dir / "candidate_opensim",
+        "candidate_log": out_dir / "candidate_opensim" / "opensim_ik.log",
         "report": out_dir / "stage7_smoothness_report.json",
     }
 
