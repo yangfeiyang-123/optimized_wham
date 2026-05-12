@@ -1,5 +1,7 @@
 """Conservative Stage7 whole-body SMPL pose smoothing candidate generation."""
 
+from __future__ import annotations
+
 from copy import deepcopy
 from dataclasses import dataclass
 
