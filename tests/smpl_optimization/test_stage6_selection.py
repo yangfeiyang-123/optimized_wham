@@ -1,6 +1,8 @@
 import sys
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
@@ -81,3 +83,93 @@ def test_rolls_back_when_root_shift_exceeds_budget():
 
     assert result["selected"] == "iter_00"
     assert not result["checks"]["root_y_total_shift_within_budget"]
+
+
+def test_missing_candidate_opensim_or_pose_delta_fails_closed():
+    baseline = _summary()
+    candidate = _summary(lower_body_mean_rms=0.04)
+    del candidate["opensim"]
+    del candidate["smpl"]["pose_delta"]
+
+    result = select_stage6_result(baseline, candidate, root_y_budget=0.25)
+
+    assert result["selected"] == "iter_00"
+    assert not result["accepted"]
+    assert not result["checks"]["opensim_mean_rms_not_worse"]
+    assert not result["checks"]["opensim_max_rms_not_worse"]
+    assert not result["checks"]["upper_body_pose_delta_small"]
+    assert not result["checks"]["lower_body_pose_delta_bounded"]
+
+
+def test_target_improvements_use_report_facing_keys():
+    result = select_stage6_result(
+        _summary(lower_body_mean_rms=0.08, penetration=0.003),
+        _summary(lower_body_mean_rms=0.06, penetration=0.002),
+        root_y_budget=0.25,
+    )
+
+    assert set(result["target_improvements"]) == {
+        "opensim_lower_body_marker_rms_reduced",
+        "smpl_foot_penetration_reduced",
+        "smpl_contact_foot_sliding_reduced",
+        "root_vertical_jitter_reduced",
+    }
+
+
+def test_rolls_back_when_beta_var_is_positive():
+    baseline = _summary()
+    candidate = _summary(beta_var=0.01, lower_body_mean_rms=0.04)
+
+    result = select_stage6_result(baseline, candidate, root_y_budget=0.25)
+
+    assert result["selected"] == "iter_00"
+    assert not result["checks"]["beta_variation_after_max_abs_zero"]
+
+
+def test_rolls_back_when_frame_count_changes():
+    baseline = _summary(frames=100)
+    candidate = _summary(frames=99, lower_body_mean_rms=0.04)
+
+    result = select_stage6_result(baseline, candidate, root_y_budget=0.25)
+
+    assert result["selected"] == "iter_00"
+    assert not result["checks"]["frame_count_unchanged"]
+
+
+def test_rolls_back_when_opensim_max_rms_worsens():
+    baseline = _summary(max_rms=0.12)
+    candidate = _summary(max_rms=0.13, lower_body_mean_rms=0.04)
+
+    result = select_stage6_result(baseline, candidate, root_y_budget=0.25)
+
+    assert result["selected"] == "iter_00"
+    assert not result["checks"]["opensim_max_rms_not_worse"]
+
+
+@pytest.mark.parametrize(
+    ("candidate_kwargs", "check_name"),
+    [
+        (
+            {"penetration": 0.003, "lower_body_mean_rms": 0.04},
+            "smpl_max_foot_penetration_not_worse",
+        ),
+        (
+            {"sliding": 0.2, "lower_body_mean_rms": 0.04},
+            "smpl_contact_foot_sliding_not_worse",
+        ),
+        (
+            {"root_jitter": 0.3, "lower_body_mean_rms": 0.04},
+            "root_vertical_jitter_not_worse",
+        ),
+    ],
+)
+def test_rolls_back_when_smpl_or_root_stability_metric_worsens(
+    candidate_kwargs, check_name
+):
+    baseline = _summary(penetration=0.002, sliding=0.1, root_jitter=0.2)
+    candidate = _summary(**candidate_kwargs)
+
+    result = select_stage6_result(baseline, candidate, root_y_budget=0.25)
+
+    assert result["selected"] == "iter_00"
+    assert not result["checks"][check_name]
