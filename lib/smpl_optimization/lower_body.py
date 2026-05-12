@@ -86,6 +86,10 @@ def optimize_record(record: dict, config: LowerBodyOptimizerConfig) -> tuple[dic
     pose_root_residual_y_max_abs = float(pose_report.get("root_residual_y_max_abs", 0.0) or 0.0)
     root_y_shift_budget = max(float(config.max_root_y_shift), 0.0)
     total_root_y_shift_max_abs = _total_root_y_shift_max_abs(record, out_record)
+    frame_weights_used_for_pose = bool(config.frame_weights is not None and pose_report.get("pose_optimizer_used", False))
+    frame_weights_ignored_reason = None
+    if config.frame_weights is not None and not frame_weights_used_for_pose:
+        frame_weights_ignored_reason = "pose_pass_disabled" if not config.enable_pose_pass else "pose_pass_not_used"
 
     lower_body_optimization_report = {
         "applied_root_y_shift": shift,
@@ -98,7 +102,12 @@ def optimize_record(record: dict, config: LowerBodyOptimizerConfig) -> tuple[dic
         "total_root_y_shift_max_abs": float(round(total_root_y_shift_max_abs, 8)),
         "ground_y": float(config.ground_y),
         "foot_clearance": float(config.foot_clearance),
-        "frame_weights": _frame_weight_report(config.frame_weights, _frame_count(record)),
+        "frame_weights": _frame_weight_report(
+            config.frame_weights,
+            _frame_count(record),
+            used_for_pose_pass=frame_weights_used_for_pose,
+            ignored_reason=frame_weights_ignored_reason,
+        ),
         "foot_point_source": before_quality["foot_point_source"],
         "root_shift_applied": bool(np.any(shift > 0.0)),
         "root_shift_reason": _root_shift_reason(record, shift),
@@ -472,45 +481,57 @@ def _fit_2d_sequence(value: np.ndarray, *, n_frames: int, n_cols: int) -> np.nda
 
 
 def _fit_frame_weights(frame_weights: np.ndarray, *, n_frames: int) -> np.ndarray:
-    fitted = np.ones((n_frames,), dtype=np.float32)
     weights = np.asarray(frame_weights, dtype=np.float32).reshape(-1)
-    if weights.size == 0:
-        return fitted
-
-    rows = min(n_frames, weights.shape[0])
-    fitted[:rows] = weights[:rows]
-    if rows < n_frames:
-        fitted[rows:] = fitted[rows - 1]
-    return fitted
+    if weights.shape[0] != int(n_frames):
+        raise ValueError(f"frame_weights length must match num_frames: got {weights.shape[0]}, expected {int(n_frames)}")
+    if np.any(~np.isfinite(weights)) or np.any(weights < 0.0):
+        raise ValueError("frame_weights must not contain non-finite or negative values")
+    return weights
 
 
-def _frame_weight_report(frame_weights: Optional[np.ndarray], n_frames: int) -> dict:
+def _frame_weight_report(
+    frame_weights: Optional[np.ndarray],
+    n_frames: int,
+    *,
+    used_for_pose_pass: bool = False,
+    ignored_reason: Optional[str] = None,
+) -> dict:
+    num_frames = int(n_frames)
     if frame_weights is None:
         return {
             "provided": False,
-            "num_frames": int(n_frames),
-            "min_weight": 1.0,
-            "max_weight": 1.0,
-            "mean_weight": 1.0,
+            "num_frames": num_frames,
+            "min": 1.0,
+            "max": 1.0,
+            "mean": 1.0,
+            "used_for_pose_pass": False,
         }
 
-    fitted = _fit_frame_weights(frame_weights, n_frames=max(int(n_frames), 0))
+    fitted = _fit_frame_weights(frame_weights, n_frames=num_frames)
     if fitted.size == 0:
-        return {
+        report = {
             "provided": True,
-            "num_frames": int(n_frames),
-            "min_weight": 1.0,
-            "max_weight": 1.0,
-            "mean_weight": 1.0,
+            "num_frames": num_frames,
+            "min": 1.0,
+            "max": 1.0,
+            "mean": 1.0,
+            "used_for_pose_pass": bool(used_for_pose_pass),
         }
+        if ignored_reason is not None:
+            report["ignored_reason"] = ignored_reason
+        return report
 
-    return {
+    report = {
         "provided": True,
-        "num_frames": int(n_frames),
-        "min_weight": float(np.min(fitted)),
-        "max_weight": float(np.max(fitted)),
-        "mean_weight": float(np.mean(fitted)),
+        "num_frames": num_frames,
+        "min": float(np.min(fitted)),
+        "max": float(np.max(fitted)),
+        "mean": float(np.mean(fitted)),
+        "used_for_pose_pass": bool(used_for_pose_pass),
     }
+    if ignored_reason is not None:
+        report["ignored_reason"] = ignored_reason
+    return report
 
 
 def _sync_lower_body_pose_fields(record: dict, *, source_key: str) -> None:
