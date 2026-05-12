@@ -10,6 +10,8 @@ if str(REPO_ROOT) not in sys.path:
 from scripts.video_to_fixed_smpl_to_opensim import (  # noqa: E402
     build_parser,
     build_whole_body_smooth_cmd,
+    parse_args,
+    selected_whole_body_smooth_pkl,
 )
 
 
@@ -46,6 +48,24 @@ def test_build_parser_accepts_whole_body_smooth_flag():
     assert args.whole_body_smooth is True
 
 
+def test_parse_args_rejects_whole_body_smooth_with_skip_ik():
+    try:
+        parse_args(
+            [
+                "--video",
+                "examples/forehand_clear/video1.mp4",
+                "--world-grounded",
+                "--optimize-lower-body",
+                "--whole-body-smooth",
+                "--skip-ik",
+            ]
+        )
+    except SystemExit as exc:
+        assert exc.code == 2
+    else:
+        raise AssertionError("Expected SystemExit")
+
+
 def test_build_whole_body_smooth_cmd_contains_stage7_flags(tmp_path):
     cmd = build_whole_body_smooth_cmd(
         _args(True), tmp_path / "selected.pkl", tmp_path / "stage7"
@@ -67,3 +87,10 @@ def test_build_whole_body_smooth_cmd_can_fix_root(tmp_path):
 
     assert "--fix-root" in cmd
     assert "--free-root" not in cmd
+
+
+def test_selected_whole_body_smooth_pkl_uses_stage7_output_name(tmp_path):
+    assert (
+        selected_whole_body_smooth_pkl(tmp_path / "stage7")
+        == tmp_path / "stage7" / "selected_smooth_smpl.pkl"
+    )

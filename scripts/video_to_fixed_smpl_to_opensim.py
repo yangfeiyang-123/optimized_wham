@@ -163,6 +163,10 @@ def build_whole_body_smooth_cmd(
     return cmd
 
 
+def selected_whole_body_smooth_pkl(out_dir: Path) -> Path:
+    return Path(out_dir) / "selected_smooth_smpl.pkl"
+
+
 def load_fixed_beta_report(report_path: Path) -> dict:
     report = json.loads(report_path.read_text(encoding="utf-8"))
     tracks = report.get("tracks", {})
@@ -305,13 +309,17 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def parse_args() -> argparse.Namespace:
-    return build_parser().parse_args()
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.whole_body_smooth and args.skip_ik:
+        parser.error("--whole-body-smooth requires IK validation; remove --skip-ik")
+    return args
 
 
 def main() -> int:
     parser = build_parser()
-    args = parser.parse_args()
+    args = parse_args()
     if args.optimize_lower_body and not args.world_grounded:
         parser.error(
             "--optimize-lower-body requires --world-grounded so ground_y=0 is meaningful."
@@ -512,7 +520,9 @@ def main() -> int:
                 args, retarget_input_pkl, whole_body_smooth_out
             )
         )
-        selected_smooth_smpl_pkl = whole_body_smooth_out / "selected_smooth_smpl.pkl"
+        selected_smooth_smpl_pkl = selected_whole_body_smooth_pkl(
+            whole_body_smooth_out
+        )
         retarget_input_pkl = require_file(
             selected_smooth_smpl_pkl, "Stage7 selected smooth SMPL pkl"
         )
