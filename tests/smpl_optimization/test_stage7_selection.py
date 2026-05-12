@@ -29,9 +29,13 @@ def _summary(
 ):
     return {
         "opensim": {
+            "valid": True,
+            "num_frames": frames,
             "mean_rms": mean_rms,
             "max_rms": max_rms,
             "motion": {
+                "finite": True,
+                "num_frames": frames,
                 "num_range_violations": range_violations,
                 "num_coordinate_jumps": coordinate_jumps,
                 "coordinate_jerk": {"rms": coordinate_jerk},
@@ -154,9 +158,13 @@ def test_tolerance_boundaries_are_inclusive():
 def test_accepts_plan_shaped_summary_when_pose_jerk_improves():
     baseline = {
         "opensim": {
+            "valid": True,
+            "num_frames": 100,
             "mean_rms": 0.05,
             "max_rms": 0.12,
             "motion": {
+                "finite": True,
+                "num_frames": 100,
                 "num_range_violations": 0,
                 "num_coordinate_jumps": 3,
                 "coordinate_jerk": {"rms": 0.4},
@@ -184,9 +192,13 @@ def test_accepts_plan_shaped_summary_when_pose_jerk_improves():
     }
     candidate = {
         "opensim": {
+            "valid": True,
+            "num_frames": 100,
             "mean_rms": 0.05,
             "max_rms": 0.12,
             "motion": {
+                "finite": True,
+                "num_frames": 100,
                 "num_range_violations": 0,
                 "num_coordinate_jumps": 3,
                 "coordinate_jerk": {"rms": 0.4},
@@ -229,6 +241,48 @@ def test_zero_baseline_ratio_gate_allows_tiny_absolute_regression():
     assert result["selected"] == "candidate"
     assert result["accepted"]
     assert result["checks"]["smpl_contact_sliding_mean_not_worse"]
+
+
+def test_rejects_candidate_when_opensim_motion_is_not_finite():
+    baseline = _summary(whole_body_jerk=0.8)
+    candidate = _summary(whole_body_jerk=0.6)
+    candidate["opensim"]["motion"]["finite"] = False
+
+    result = select_stage7_result(baseline, candidate)
+
+    assert result["selected"] == "baseline"
+    assert not result["accepted"]
+    assert not result["checks"]["opensim_motion_finite"]
+    assert "opensim_motion_finite" in result["failed_checks"]
+
+
+def test_rejects_candidate_when_ik_log_did_not_parse():
+    baseline = _summary(whole_body_jerk=0.8)
+    candidate = _summary(whole_body_jerk=0.6)
+    candidate["opensim"]["valid"] = False
+    candidate["opensim"]["mean_rms"] = None
+    candidate["opensim"]["max_rms"] = None
+
+    result = select_stage7_result(baseline, candidate)
+
+    assert result["selected"] == "baseline"
+    assert not result["accepted"]
+    assert not result["checks"]["opensim_ik_logs_valid"]
+    assert not result["checks"]["opensim_mean_rms_not_worse"]
+
+
+def test_rejects_candidate_when_opensim_frame_coverage_is_partial():
+    baseline = _summary(frames=100, whole_body_jerk=0.8)
+    candidate = _summary(frames=100, whole_body_jerk=0.6)
+    candidate["opensim"]["num_frames"] = 60
+    candidate["opensim"]["motion"]["num_frames"] = 60
+
+    result = select_stage7_result(baseline, candidate)
+
+    assert result["selected"] == "baseline"
+    assert not result["accepted"]
+    assert not result["checks"]["opensim_ik_frame_count_matches_smpl"]
+    assert not result["checks"]["opensim_motion_frame_count_matches_smpl"]
 
 
 def test_zero_baseline_ratio_gate_rejects_large_absolute_regression():

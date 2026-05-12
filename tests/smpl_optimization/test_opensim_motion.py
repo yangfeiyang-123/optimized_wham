@@ -53,6 +53,7 @@ def test_summarize_mot_coordinates_counts_jumps(tmp_path: Path):
     summary = summarize_mot_coordinates(mot, jump_threshold=1.0)
 
     assert summary["finite"] is True
+    assert summary["num_frames"] == 3
     assert summary["num_coordinate_jumps"] == 1
     assert summary["coordinate_jerk"]["rms"] == 0.0
 
@@ -131,6 +132,7 @@ def test_summarize_mot_coordinates_handles_coordinate_only_files(tmp_path: Path)
     summary = summarize_mot_coordinates(mot, jump_threshold=1.0)
 
     assert summary["finite"] is True
+    assert summary["num_frames"] == 2
     assert summary["num_coordinates"] == 1
     assert summary["num_coordinate_jumps"] == 1
 

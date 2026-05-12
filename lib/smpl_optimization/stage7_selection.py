@@ -12,6 +12,15 @@ def _number(data, *keys, default=None):
     return value
 
 
+def _flag(data, *keys):
+    value = data
+    for key in keys:
+        if not isinstance(value, dict) or key not in value:
+            return False
+        value = value[key]
+    return bool(value) if isinstance(value, bool) else False
+
+
 def _not_worse_abs(candidate, baseline, tolerance):
     if candidate is None or baseline is None:
         return False
@@ -88,6 +97,10 @@ def select_stage7_result(
     candidate_mean_rms = _number(candidate, "opensim", "mean_rms")
     baseline_max_rms = _number(baseline, "opensim", "max_rms")
     candidate_max_rms = _number(candidate, "opensim", "max_rms")
+    baseline_ik_frames = _number(baseline, "opensim", "num_frames")
+    candidate_ik_frames = _number(candidate, "opensim", "num_frames")
+    baseline_motion_frames = _number(baseline, "opensim", "motion", "num_frames")
+    candidate_motion_frames = _number(candidate, "opensim", "motion", "num_frames")
     baseline_range_violations = _number(
         baseline, "opensim", "motion", "num_range_violations"
     )
@@ -146,6 +159,26 @@ def select_stage7_result(
             and candidate_frames == baseline_frames
         ),
         "beta_variation_after_max_abs_zero": candidate_beta_variation == 0.0,
+        "opensim_ik_logs_valid": (
+            _flag(baseline, "opensim", "valid")
+            and _flag(candidate, "opensim", "valid")
+        ),
+        "opensim_motion_finite": (
+            _flag(baseline, "opensim", "motion", "finite")
+            and _flag(candidate, "opensim", "motion", "finite")
+        ),
+        "opensim_ik_frame_count_matches_smpl": (
+            baseline_frames is not None
+            and candidate_frames is not None
+            and baseline_ik_frames == baseline_frames
+            and candidate_ik_frames == candidate_frames
+        ),
+        "opensim_motion_frame_count_matches_smpl": (
+            baseline_frames is not None
+            and candidate_frames is not None
+            and baseline_motion_frames == baseline_frames
+            and candidate_motion_frames == candidate_frames
+        ),
         "smpl_max_foot_penetration_not_worse": _not_worse_abs(
             candidate_penetration,
             baseline_penetration,
@@ -202,11 +235,13 @@ def select_stage7_result(
         ),
     }
     accepted = all(checks.values())
+    failed_checks = [name for name, passed in checks.items() if not passed]
 
     return {
         "selected": "candidate" if accepted else "baseline",
         "accepted": accepted,
         "checks": checks,
+        "failed_checks": failed_checks,
         "target_improvements": target_improvements,
         "baseline": baseline,
         "candidate": candidate,

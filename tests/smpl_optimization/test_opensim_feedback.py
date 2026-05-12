@@ -30,11 +30,26 @@ def test_parse_ik_log_metrics_extracts_frames(tmp_path):
 
     metrics = parse_ik_log_metrics(log)
 
+    assert metrics["valid"] is True
+    assert metrics["parse_status"] == "ok"
     assert metrics["num_frames"] == 3
     assert metrics["mean_rms"] == 0.08333333
     assert metrics["max_rms"] == 0.12
     assert metrics["max_marker_name"] == "ankle_l"
     assert metrics["frames"][1]["max_marker"] == "ankle_l"
+
+
+def test_parse_ik_log_metrics_marks_empty_logs_invalid(tmp_path):
+    log = tmp_path / "empty.log"
+    log.write_text("[info] Running tool without frame rows\n", encoding="utf-8")
+
+    metrics = parse_ik_log_metrics(log)
+
+    assert metrics["valid"] is False
+    assert metrics["parse_status"] == "no_frames"
+    assert metrics["num_frames"] == 0
+    assert metrics["mean_rms"] is None
+    assert metrics["max_rms"] is None
 
 
 def test_marker_classification_is_case_insensitive_for_lower_body():

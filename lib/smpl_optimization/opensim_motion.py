@@ -76,10 +76,11 @@ def _coordinate_columns(columns):
     return [index for index, name in enumerate(columns) if name.lower() != "time"]
 
 
-def _empty_summary(finite=True):
+def _empty_summary(finite=True, num_frames=0):
     zero = {"rms": 0.0, "max_abs": 0.0}
     return {
         "finite": bool(finite),
+        "num_frames": int(num_frames),
         "num_coordinates": 0,
         "num_range_violations": 0,
         "num_coordinate_jumps": 0,
@@ -100,7 +101,7 @@ def summarize_mot_coordinates(
     coordinate_indexes = _coordinate_columns(columns)
 
     if data.size == 0 or not coordinate_indexes:
-        return _empty_summary(finite=np.all(np.isfinite(data)))
+        return _empty_summary(finite=np.all(np.isfinite(data)), num_frames=data.shape[0])
 
     coordinates = data[:, coordinate_indexes]
     finite = bool(np.isfinite(data).all())
@@ -125,6 +126,7 @@ def summarize_mot_coordinates(
 
     return {
         "finite": finite,
+        "num_frames": int(coordinates.shape[0]),
         "num_coordinates": len(coordinate_indexes),
         "num_range_violations": num_range_violations,
         "num_coordinate_jumps": num_coordinate_jumps,

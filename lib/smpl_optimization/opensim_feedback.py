@@ -38,9 +38,11 @@ _IK_LOG_PATTERN = re.compile(
 
 def _neutral_metrics():
     return {
+        "valid": False,
+        "parse_status": "no_frames",
         "num_frames": 0,
-        "mean_rms": 0.0,
-        "max_rms": 0.0,
+        "mean_rms": None,
+        "max_rms": None,
         "max_marker_name": "",
         "frames": [],
     }
@@ -93,6 +95,8 @@ def parse_ik_log_metrics(path: Path) -> dict:
     rms_values = np.asarray([frame["rms"] for frame in frames], dtype=np.float64)
     max_frame = max(frames, key=lambda frame: frame["max"])
     return {
+        "valid": True,
+        "parse_status": "ok",
         "num_frames": len(frames),
         "mean_rms": _clean_float(np.mean(rms_values)),
         "max_rms": _clean_float(np.max(rms_values)),

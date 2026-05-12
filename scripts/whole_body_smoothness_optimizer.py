@@ -27,6 +27,10 @@ from lib.smpl_optimization.metrics import (  # noqa: E402
 from lib.smpl_optimization.opensim_feedback import parse_ik_log_metrics  # noqa: E402
 from lib.smpl_optimization.opensim_motion import summarize_mot_coordinates  # noqa: E402
 from lib.smpl_optimization.reports import to_jsonable, write_json  # noqa: E402
+from lib.smpl_optimization.smpl_forward import (  # noqa: E402
+    expand_betas,
+    smpl_forward_axis_angle,
+)
 from lib.smpl_optimization.stage7_selection import select_stage7_result  # noqa: E402
 from lib.smpl_optimization.whole_body_smooth import (  # noqa: E402
     WholeBodySmoothConfig,
@@ -142,6 +146,92 @@ def _record_root(record: dict) -> np.ndarray:
             trans = np.asarray(to_numpy(record[key]))
             return trans[:, :3] if trans.ndim == 2 and trans.shape[1] >= 3 else trans
     return np.empty((0, 3), dtype=np.float32)
+
+
+def _record_pose_key(record: dict) -> str | None:
+    for key in ("pose_world", "pose"):
+        if key in record:
+            return key
+    return None
+
+
+def _record_trans_key(record: dict) -> str | None:
+    for key in ("trans_world", "trans"):
+        if key in record:
+            return key
+    return None
+
+
+def refresh_smpl_derived_geometry(
+    record: dict,
+    *,
+    device: str,
+    chunk_size: int,
+) -> dict:
+    pose_key = _record_pose_key(record)
+    trans_key = _record_trans_key(record)
+    if pose_key is None or trans_key is None or "betas" not in record:
+        return {
+            "refreshed": False,
+            "reason": "missing_pose_trans_or_betas",
+        }
+
+    pose = np.asarray(to_numpy(record[pose_key]), dtype=np.float32)
+    trans = np.asarray(to_numpy(record[trans_key]), dtype=np.float32)
+    if pose.ndim != 2 or pose.shape[1] < 72 or trans.ndim != 2 or trans.shape[1] < 3:
+        return {
+            "refreshed": False,
+            "reason": "invalid_pose_or_trans_shape",
+        }
+
+    n_frames = min(int(pose.shape[0]), int(trans.shape[0]))
+    if n_frames <= 0:
+        return {
+            "refreshed": False,
+            "reason": "empty_sequence",
+        }
+    pose = pose[:n_frames, :72]
+    trans = trans[:n_frames, :3]
+    betas = expand_betas(record["betas"], n_frames)
+
+    import torch
+    from lib.models import build_body_model
+
+    requested_device = str(device)
+    if requested_device.startswith("cuda") and not torch.cuda.is_available():
+        requested_device = "cpu"
+    torch_device = torch.device(requested_device)
+
+    feet_chunks = []
+    verts_chunks = []
+    chunk_size = max(1, int(chunk_size))
+    for start in range(0, n_frames, chunk_size):
+        end = min(start + chunk_size, n_frames)
+        model = build_body_model(str(torch_device), batch_size=end - start)
+        with torch.no_grad():
+            smpl = smpl_forward_axis_angle(
+                model,
+                torch.tensor(pose[start:end], dtype=torch.float32, device=torch_device),
+                torch.tensor(betas[start:end], dtype=torch.float32, device=torch_device),
+                torch.tensor(trans[start:end], dtype=torch.float32, device=torch_device),
+            )
+        feet_chunks.append(smpl["feet"].detach().cpu().numpy().astype(np.float32))
+        verts_chunks.append(smpl["vertices"].detach().cpu().numpy().astype(np.float32))
+
+    fresh_feet = np.concatenate(feet_chunks, axis=0).astype(np.float32)
+    fresh_verts = np.concatenate(verts_chunks, axis=0).astype(np.float32)
+    record["feet_refined"] = fresh_feet
+    record["feet_world"] = fresh_feet.copy()
+    record["feet"] = fresh_feet.copy()
+    record["verts"] = fresh_verts
+    return {
+        "refreshed": True,
+        "num_frames": int(n_frames),
+        "pose_key": pose_key,
+        "trans_key": trans_key,
+        "feet_shape": list(fresh_feet.shape),
+        "verts_shape": list(fresh_verts.shape),
+    }
 
 
 def _zero_pose_delta() -> dict:
@@ -317,6 +407,11 @@ def main() -> int:
         paths["baseline_smpl"], args.track_id
     )
     candidate_record, smooth_report = smooth_record(record, _smooth_config(args))
+    smooth_report["derived_geometry_refresh"] = refresh_smpl_derived_geometry(
+        candidate_record,
+        device=args.device,
+        chunk_size=args.chunk_size,
+    )
     candidate_data = replace_selected_record(data, selected_track_id, candidate_record)
     joblib.dump(candidate_data, paths["candidate_smpl"])
 

@@ -12,6 +12,15 @@ from lib.smpl_optimization.metrics import pose_smoothness, root_translation_smoo
 
 LOWER_BODY_JOINTS = (1, 2, 4, 5, 7, 8, 10, 11)
 ROOT_AND_TRUNK_JOINTS = (0, 3, 6, 9, 12, 13, 14, 15)
+DERIVED_GEOMETRY_KEYS = (
+    "feet_refined",
+    "feet_world",
+    "feet",
+    "verts",
+    "vertices",
+    "joints_world",
+    "joints",
+)
 
 
 @dataclass(frozen=True, init=False)
@@ -92,6 +101,11 @@ def _record_trans_key(record):
     if "trans" in record:
         return "trans"
     return None
+
+
+def _drop_derived_geometry(record):
+    for key in DERIVED_GEOMETRY_KEYS:
+        record.pop(key, None)
 
 
 def _root_report(record, candidate, trans_key):
@@ -205,6 +219,7 @@ def smooth_record(record, config=None) -> tuple[dict, dict]:
         pose_dtype, copy=False
     )
     candidate[pose_key] = candidate_pose
+    _drop_derived_geometry(candidate)
 
     if trans_key is not None:
         trans = np.asarray(record[trans_key])

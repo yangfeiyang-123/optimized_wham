@@ -60,6 +60,27 @@ def test_smooth_record_preserves_betas_and_bounds_pose_delta():
     np.testing.assert_array_equal(record["pose_world"], pose)
 
 
+def test_smooth_record_drops_stale_derived_geometry_after_pose_change():
+    pose = np.zeros((5, 72), dtype=np.float32)
+    pose[2, 4] = 1.0
+    record = {
+        "pose_world": pose,
+        "trans_world": np.zeros((5, 3), dtype=np.float32),
+        "betas": np.zeros((5, 10), dtype=np.float32),
+        "feet_world": np.ones((5, 4, 3), dtype=np.float32),
+        "feet_refined": np.ones((5, 4, 3), dtype=np.float32),
+        "verts": np.ones((5, 10, 3), dtype=np.float32),
+        "joints_world": np.ones((5, 24, 3), dtype=np.float32),
+    }
+
+    candidate, report = smooth_record(record)
+
+    assert report["candidate_generated"] is True
+    for key in ("feet_world", "feet_refined", "feet", "verts", "joints_world"):
+        assert key not in candidate
+    assert "feet_world" in record
+
+
 def test_smooth_record_reports_selector_ready_smoothness_when_trans_exists():
     pose = np.zeros((5, 72), dtype=np.float32)
     pose[2, 20] = 0.5
