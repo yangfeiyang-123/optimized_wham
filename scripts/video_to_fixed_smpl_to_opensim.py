@@ -125,6 +125,44 @@ def build_opensim_feedback_cmd(
     return cmd
 
 
+def build_whole_body_smooth_cmd(
+    args: argparse.Namespace, input_pkl: Path, out_dir: Path
+) -> list[str]:
+    cmd = [
+        sys.executable,
+        "scripts/whole_body_smoothness_optimizer.py",
+        "--input-pkl",
+        str(input_pkl),
+        "--out-dir",
+        str(out_dir),
+        "--fps",
+        str(args.fps),
+        "--track-id",
+        str(args.track_id),
+        "--device",
+        args.device,
+        "--chunk-size",
+        str(args.chunk_size),
+        "--retarget-config",
+        args.retarget_config,
+        "--alignment",
+        args.alignment,
+        "--axis-conversion",
+        args.axis_conversion,
+        "--root-calibration",
+        args.root_calibration,
+        "--root-calib-frames",
+        str(args.root_calib_frames),
+    ]
+    if args.opensim_cmd:
+        cmd += ["--opensim-cmd", args.opensim_cmd]
+    if args.free_root:
+        cmd.append("--free-root")
+    else:
+        cmd.append("--fix-root")
+    return cmd
+
+
 def load_fixed_beta_report(report_path: Path) -> dict:
     report = json.loads(report_path.read_text(encoding="utf-8"))
     tracks = report.get("tracks", {})
@@ -258,6 +296,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Run Stage6 OpenSim feedback loop after world-grounded lower-body optimization.",
     )
     parser.add_argument("--opensim-feedback-out-dir", default=None)
+    parser.add_argument(
+        "--whole-body-smooth",
+        action="store_true",
+        help="Run Stage7 whole-body smoothness selection before final OpenSim retarget.",
+    )
+    parser.add_argument("--whole-body-smooth-out-dir", default=None)
     return parser
 
 
@@ -284,6 +328,7 @@ def main() -> int:
 
     output_root = Path(args.output_pth).resolve()
     sequence = video_sequence_name(video)
+    run_id = safe_ascii_name(sequence)
     wham_dir = output_root / sequence
     wham_pkl = wham_dir / "wham_output.pkl"
     canonical_pkl = wham_dir / "canonical_wham_output.pkl"
@@ -291,20 +336,29 @@ def main() -> int:
     world_grounded_out = (
         Path(args.world_grounded_out_dir).resolve()
         if args.world_grounded_out_dir
-        else output_root / "_world_grounded" / safe_ascii_name(sequence)
+        else output_root / "_world_grounded" / run_id
     )
     lower_body_out = (
         Path(args.lower_body_out_dir).resolve()
         if args.lower_body_out_dir
-        else output_root / "_lower_body_optimized" / safe_ascii_name(sequence)
+        else output_root / "_lower_body_optimized" / run_id
     )
     opensim_feedback_out = (
         Path(args.opensim_feedback_out_dir).resolve()
         if args.opensim_feedback_out_dir
-        else output_root / "_opensim_feedback" / safe_ascii_name(sequence)
+        else output_root / "_opensim_feedback" / run_id
+    )
+    whole_body_smooth_out = (
+        Path(args.whole_body_smooth_out_dir).resolve()
+        if args.whole_body_smooth_out_dir
+        else output_root / "_whole_body_smooth" / run_id
     )
     if args.retarget_out_dir:
         retarget_out = Path(args.retarget_out_dir).resolve()
+    elif args.whole_body_smooth:
+        retarget_out = default_stage_retarget_out_dir(
+            output_root, sequence, "whole_body_smooth"
+        )
     elif args.opensim_feedback_loop:
         retarget_out = default_stage_retarget_out_dir(
             output_root, sequence, "opensim_feedback"
@@ -451,6 +505,18 @@ def main() -> int:
             selected_corrected_smpl_pkl, "Stage6 selected corrected SMPL pkl"
         )
 
+    selected_smooth_smpl_pkl = None
+    if args.whole_body_smooth:
+        run(
+            build_whole_body_smooth_cmd(
+                args, retarget_input_pkl, whole_body_smooth_out
+            )
+        )
+        selected_smooth_smpl_pkl = whole_body_smooth_out / "selected_smooth_smpl.pkl"
+        retarget_input_pkl = require_file(
+            selected_smooth_smpl_pkl, "Stage7 selected smooth SMPL pkl"
+        )
+
     retarget_cmd = [
         sys.executable,
         "scripts/retarget_smpl_to_opensim.py",
@@ -500,6 +566,9 @@ def main() -> int:
     if args.opensim_feedback_loop:
         print(f"opensim_feedback_dir: {opensim_feedback_out}")
         print(f"selected_corrected_smpl_pkl: {selected_corrected_smpl_pkl}")
+    if args.whole_body_smooth:
+        print(f"whole_body_smooth_dir: {whole_body_smooth_out}")
+        print(f"selected_smooth_smpl_pkl: {selected_smooth_smpl_pkl}")
     print(f"retarget_dir: {retarget_out}")
     if args.skip_ik:
         print("opensim_motion: <not run; --skip-ik>")
