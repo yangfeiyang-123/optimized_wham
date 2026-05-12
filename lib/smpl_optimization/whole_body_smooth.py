@@ -12,15 +12,41 @@ LOWER_BODY_JOINTS = (1, 2, 4, 5, 7, 8, 10, 11)
 ROOT_AND_TRUNK_JOINTS = (0, 3, 6, 9, 12, 13, 14, 15)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, init=False)
 class WholeBodySmoothConfig:
-    lower_body_weight: float = 0.35
-    trunk_weight: float = 0.55
-    upper_body_weight: float = 0.8
-    max_lower_body_delta: float = 0.08
-    max_whole_body_delta: float = 0.12
-    max_root_delta: float = 0.05
-    max_vertical_delta: float = 0.02
+    lower_body_weight: float
+    trunk_weight: float
+    upper_body_weight: float
+    max_lower_body_delta: float
+    max_whole_body_delta: float
+    max_root_delta: float
+    max_root_vertical_delta: float
+
+    def __init__(
+        self,
+        lower_body_weight: float = 0.35,
+        trunk_weight: float = 0.55,
+        upper_body_weight: float = 0.8,
+        max_lower_body_delta: float = 0.05,
+        max_whole_body_delta: float = 0.12,
+        max_root_delta: float = 0.03,
+        max_root_vertical_delta: float = 0.015,
+        max_vertical_delta: float | None = None,
+    ):
+        if max_vertical_delta is not None:
+            max_root_vertical_delta = max_vertical_delta
+
+        object.__setattr__(self, "lower_body_weight", lower_body_weight)
+        object.__setattr__(self, "trunk_weight", trunk_weight)
+        object.__setattr__(self, "upper_body_weight", upper_body_weight)
+        object.__setattr__(self, "max_lower_body_delta", max_lower_body_delta)
+        object.__setattr__(self, "max_whole_body_delta", max_whole_body_delta)
+        object.__setattr__(self, "max_root_delta", max_root_delta)
+        object.__setattr__(self, "max_root_vertical_delta", max_root_vertical_delta)
+
+    @property
+    def max_vertical_delta(self):
+        return self.max_root_vertical_delta
 
 
 def _clean_float(value):
@@ -66,20 +92,14 @@ def _record_trans_key(record):
     return None
 
 
-def _zero_smoothness():
-    return root_translation_smoothness(np.zeros((0, 3), dtype=np.float32))
-
-
 def _root_report(record, candidate, trans_key):
     if trans_key is None:
-        zero = _zero_smoothness()
-        return zero, zero, {"max_abs": 0.0, "vertical_max_abs": 0.0}
+        return {}, {}, {"max_abs": 0.0, "vertical_max_abs": 0.0}, False
 
     baseline = np.asarray(record[trans_key])
     smoothed = np.asarray(candidate[trans_key])
     if baseline.ndim != 2 or baseline.shape[1] < 3:
-        zero = _zero_smoothness()
-        return zero, zero, {"max_abs": 0.0, "vertical_max_abs": 0.0}
+        return {}, {}, {"max_abs": 0.0, "vertical_max_abs": 0.0}, False
 
     delta = smoothed[:, :3].astype(np.float64) - baseline[:, :3].astype(np.float64)
     return (
@@ -89,6 +109,7 @@ def _root_report(record, candidate, trans_key):
             "max_abs": _clean_float(np.max(np.abs(delta))) if delta.size else 0.0,
             "vertical_max_abs": _clean_float(np.max(np.abs(delta[:, 1]))) if delta.size else 0.0,
         },
+        True,
     )
 
 
@@ -109,11 +130,17 @@ def _base_report(record, candidate, pose_key, trans_key, candidate_generated, re
         else:
             pose_delta = np.zeros((0, 24, 3), dtype=np.float64)
 
-    root_before, root_after, root_delta = _root_report(record, candidate, trans_key)
+    pose_after_report = pose_smoothness(pose_after)
+    root_before, root_after, root_delta, root_available = _root_report(
+        record, candidate, trans_key
+    )
     report = {
         "candidate_generated": bool(candidate_generated),
+        "pose_smoothness": pose_after_report,
         "pose_smoothness_before": pose_smoothness(pose_before),
-        "pose_smoothness_after": pose_smoothness(pose_after),
+        "pose_smoothness_after": pose_after_report,
+        "root_smoothness": root_after if root_available else {},
+        "root_smoothness_available": root_available,
         "root_smoothness_before": root_before,
         "root_smoothness_after": root_after,
         "pose_delta": {
@@ -185,7 +212,9 @@ def smooth_record(record, config=None) -> tuple[dict, dict]:
             smoothed_trans = _smooth_three_point(baseline_trans)
             clipped_trans = _clip_delta(smoothed_trans, baseline_trans, config.max_root_delta)
             clipped_trans[:, 1] = _clip_delta(
-                clipped_trans[:, 1], baseline_trans[:, 1], config.max_vertical_delta
+                clipped_trans[:, 1],
+                baseline_trans[:, 1],
+                config.max_root_vertical_delta,
             )
             candidate_trans = np.asarray(candidate[trans_key]).copy()
             candidate_trans[:, :3] = clipped_trans.astype(trans_dtype, copy=False)

@@ -21,6 +21,14 @@ def test_build_region_weights_prioritizes_lower_body():
     assert weights[1].max() < weights[16].max()
 
 
+def test_default_bounds_do_not_exceed_stage7_selector_gates():
+    config = WholeBodySmoothConfig()
+
+    assert config.max_lower_body_delta <= 0.05
+    assert config.max_root_delta <= 0.03
+    assert config.max_root_vertical_delta <= 0.015
+
+
 def test_smooth_record_preserves_betas_and_bounds_pose_delta():
     pose = np.zeros((5, 75), dtype=np.float32)
     pose[2, 4] = 1.0
@@ -35,7 +43,7 @@ def test_smooth_record_preserves_betas_and_bounds_pose_delta():
         max_lower_body_delta=0.05,
         max_whole_body_delta=0.08,
         max_root_delta=0.1,
-        max_vertical_delta=0.02,
+        max_root_vertical_delta=0.02,
     )
 
     candidate, report = smooth_record(record, config)
@@ -51,6 +59,44 @@ def test_smooth_record_preserves_betas_and_bounds_pose_delta():
     np.testing.assert_array_equal(record["pose_world"], pose)
 
 
+def test_smooth_record_reports_selector_ready_smoothness_when_trans_exists():
+    pose = np.zeros((5, 72), dtype=np.float32)
+    pose[2, 20] = 0.5
+    trans = np.zeros((5, 3), dtype=np.float32)
+    trans[2, 1] = 0.03
+    record = {"pose": pose, "trans": trans}
+
+    _, report = smooth_record(record)
+
+    assert report["pose_smoothness"] == report["pose_smoothness_after"]
+    assert report["root_smoothness"] == report["root_smoothness_after"]
+    assert report["root_smoothness_available"] is True
+    assert report["pose_smoothness"]["jerk"]["rms"] >= 0.0
+    assert report["root_smoothness"]["jerk"]["rms"] >= 0.0
+
+
+def test_missing_trans_marks_root_smoothness_unavailable():
+    pose = np.zeros((5, 72), dtype=np.float32)
+    pose[2, 4] = 0.5
+    record = {"pose": pose}
+
+    _, report = smooth_record(record)
+
+    assert report["root_smoothness_available"] is False
+    assert report["root_smoothness"] == {}
+    assert report["root_delta"] == {"max_abs": 0.0, "vertical_max_abs": 0.0}
+
+
+def test_extra_pose_values_beyond_smpl_pose_remain_unchanged():
+    pose = np.zeros((5, 78), dtype=np.float32)
+    pose[2, 4] = 1.0
+    pose[:, 72:] = np.arange(30, dtype=np.float32).reshape(5, 6)
+
+    candidate, _ = smooth_record({"pose": pose})
+
+    np.testing.assert_array_equal(candidate["pose"][:, 72:], pose[:, 72:])
+
+
 def test_smooth_record_preserves_short_sequences():
     pose = np.zeros((2, 72), dtype=np.float32)
     record = {"pose": pose.copy(), "betas": np.ones(10, dtype=np.float32)}
@@ -62,5 +108,5 @@ def test_smooth_record_preserves_short_sequences():
     np.testing.assert_array_equal(candidate["pose"], pose)
     np.testing.assert_array_equal(candidate["betas"], record["betas"])
     assert report["root_delta"]["max_abs"] == 0.0
-    assert report["root_smoothness_before"]["jerk"]["rms"] == 0.0
-    assert report["root_smoothness_after"]["jerk"]["rms"] == 0.0
+    assert report["root_smoothness_available"] is False
+    assert report["root_smoothness"] == {}
