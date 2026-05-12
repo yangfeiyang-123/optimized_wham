@@ -327,6 +327,8 @@ def build_whole_body_smooth_cmd(args: argparse.Namespace, input_pkl: Path, out_d
         cmd += ["--opensim-cmd", args.opensim_cmd]
     if args.free_root:
         cmd.append("--free-root")
+    else:
+        cmd.append("--fix-root")
     return cmd
 
 

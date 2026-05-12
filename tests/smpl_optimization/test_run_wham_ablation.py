@@ -119,6 +119,18 @@ def test_whole_body_smooth_command_uses_previous_stage_pkl_and_free_root(tmp_pat
     assert cmd[cmd.index("--input-pkl") + 1] == str(input_pkl)
     assert cmd[cmd.index("--out-dir") + 1] == str(out_dir)
     assert "--free-root" in cmd
+    assert "--fix-root" not in cmd
+
+
+def test_whole_body_smooth_command_uses_fixed_root_by_default(tmp_path):
+    args = make_opensim_feedback_args(free_root=False)
+    input_pkl = tmp_path / "previous_stage.pkl"
+    out_dir = tmp_path / "05_whole_body_smooth"
+
+    cmd = build_whole_body_smooth_cmd(args, input_pkl, out_dir)
+
+    assert "--fix-root" in cmd
+    assert "--free-root" not in cmd
 
 
 def test_opensim_feedback_command_uses_world_pkl_and_fixed_root_by_default(tmp_path):
