@@ -13,6 +13,13 @@ def test_temporal_derivative_summary_reports_zero_for_constant_signal():
     assert summary == {"rms": 0.0, "max_abs": 0.0}
 
 
+def test_temporal_derivative_summary_treats_1d_input_as_single_frame():
+    values = np.arange(72.0)
+    assert temporal_derivative_summary(values, order=1) == {"rms": 0.0, "max_abs": 0.0}
+    assert temporal_derivative_summary(values, order=2) == {"rms": 0.0, "max_abs": 0.0}
+    assert temporal_derivative_summary(values, order=3) == {"rms": 0.0, "max_abs": 0.0}
+
+
 def test_pose_smoothness_detects_jerky_pose():
     smooth = np.zeros((8, 72), dtype=np.float32)
     jerky = smooth.copy()
