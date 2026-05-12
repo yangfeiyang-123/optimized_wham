@@ -1,8 +1,16 @@
+import sys
 from pathlib import Path
 
 import numpy as np
 
-from lib.smpl_optimization.opensim_motion import parse_mot, summarize_mot_coordinates
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from lib.smpl_optimization.opensim_motion import (  # noqa: E402
+    parse_mot,
+    summarize_mot_coordinates,
+)
 
 
 def test_parse_mot_reads_header_and_rows(tmp_path: Path):
