@@ -31,9 +31,11 @@ def _summary(
         "opensim": {
             "mean_rms": mean_rms,
             "max_rms": max_rms,
-            "coordinate_range_violations": range_violations,
-            "coordinate_jumps": coordinate_jumps,
-            "coordinate_jerk": coordinate_jerk,
+            "motion": {
+                "num_range_violations": range_violations,
+                "num_coordinate_jumps": coordinate_jumps,
+                "coordinate_jerk": {"rms": coordinate_jerk},
+            },
         },
         "smpl": {
             "beta_variation_after_max_abs": beta_var,
@@ -43,18 +45,16 @@ def _summary(
                 "mean_contact_speed": sliding_mean,
                 "max_contact_speed": sliding_max,
             },
-            "smoothness": {
-                "whole_body_pose_jerk": whole_body_jerk,
-                "root_translation_jerk": root_jerk,
-            },
             "pose_delta": {
                 "lower_body_max_abs": lower_delta,
                 "whole_body_max_abs": whole_body_delta,
             },
             "root_delta": {
-                "translation_max_abs": root_translation_delta,
+                "max_abs": root_translation_delta,
                 "vertical_max_abs": root_vertical_delta,
             },
+            "pose_smoothness": {"jerk": {"rms": whole_body_jerk}},
+            "root_smoothness": {"jerk": {"rms": root_jerk}},
         },
     }
 
@@ -110,6 +110,19 @@ def test_missing_required_numbers_fail_closed():
     assert not result["checks"]["whole_body_pose_delta_small"]
 
 
+def test_missing_plan_shaped_smoothness_value_fails_closed():
+    baseline = _summary()
+    candidate = _summary()
+    del candidate["smpl"]["pose_smoothness"]
+
+    result = select_stage7_result(baseline, candidate)
+
+    assert result["selected"] is baseline
+    assert not result["accepted"]
+    assert not result["target_improvements"]["whole_body_pose_jerk_improved"]
+    assert not result["checks"]["at_least_one_smoothness_metric_improved"]
+
+
 def test_tolerance_boundaries_are_inclusive():
     baseline = _summary(
         mean_rms=0.05,
@@ -136,3 +149,72 @@ def test_tolerance_boundaries_are_inclusive():
 
     assert result["accepted"]
     assert all(result["checks"].values())
+
+
+def test_accepts_plan_shaped_summary_when_pose_jerk_improves():
+    baseline = {
+        "opensim": {
+            "mean_rms": 0.05,
+            "max_rms": 0.12,
+            "motion": {
+                "num_range_violations": 0,
+                "num_coordinate_jumps": 3,
+                "coordinate_jerk": {"rms": 0.4},
+            },
+        },
+        "smpl": {
+            "frames": 100,
+            "beta_variation_after_max_abs": 0.0,
+            "penetration": {"max_penetration": 0.002},
+            "sliding": {
+                "mean_contact_speed": 0.1,
+                "max_contact_speed": 0.3,
+            },
+            "pose_delta": {
+                "lower_body_max_abs": 0.02,
+                "whole_body_max_abs": 0.08,
+            },
+            "root_delta": {
+                "max_abs": 0.01,
+                "vertical_max_abs": 0.005,
+            },
+            "pose_smoothness": {"jerk": {"rms": 0.8}},
+            "root_smoothness": {"jerk": {"rms": 0.2}},
+        },
+    }
+    candidate = {
+        "opensim": {
+            "mean_rms": 0.05,
+            "max_rms": 0.12,
+            "motion": {
+                "num_range_violations": 0,
+                "num_coordinate_jumps": 3,
+                "coordinate_jerk": {"rms": 0.4},
+            },
+        },
+        "smpl": {
+            "frames": 100,
+            "beta_variation_after_max_abs": 0.0,
+            "penetration": {"max_penetration": 0.002},
+            "sliding": {
+                "mean_contact_speed": 0.1,
+                "max_contact_speed": 0.3,
+            },
+            "pose_delta": {
+                "lower_body_max_abs": 0.02,
+                "whole_body_max_abs": 0.08,
+            },
+            "root_delta": {
+                "max_abs": 0.01,
+                "vertical_max_abs": 0.005,
+            },
+            "pose_smoothness": {"jerk": {"rms": 0.6}},
+            "root_smoothness": {"jerk": {"rms": 0.2}},
+        },
+    }
+
+    result = select_stage7_result(baseline, candidate)
+
+    assert result["selected"] is candidate
+    assert result["accepted"]
+    assert result["target_improvements"]["whole_body_pose_jerk_improved"]

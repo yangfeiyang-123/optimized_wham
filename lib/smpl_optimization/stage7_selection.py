@@ -78,7 +78,7 @@ def select_stage7_result(
         candidate, "smpl", "pose_delta", "whole_body_max_abs"
     )
     candidate_root_translation_delta = _number(
-        candidate, "smpl", "root_delta", "translation_max_abs"
+        candidate, "smpl", "root_delta", "max_abs"
     )
     candidate_root_vertical_delta = _number(
         candidate, "smpl", "root_delta", "vertical_max_abs"
@@ -89,28 +89,36 @@ def select_stage7_result(
     baseline_max_rms = _number(baseline, "opensim", "max_rms")
     candidate_max_rms = _number(candidate, "opensim", "max_rms")
     baseline_range_violations = _number(
-        baseline, "opensim", "coordinate_range_violations"
+        baseline, "opensim", "motion", "num_range_violations"
     )
     candidate_range_violations = _number(
-        candidate, "opensim", "coordinate_range_violations"
+        candidate, "opensim", "motion", "num_range_violations"
     )
-    baseline_coordinate_jumps = _number(baseline, "opensim", "coordinate_jumps")
-    candidate_coordinate_jumps = _number(candidate, "opensim", "coordinate_jumps")
+    baseline_coordinate_jumps = _number(
+        baseline, "opensim", "motion", "num_coordinate_jumps"
+    )
+    candidate_coordinate_jumps = _number(
+        candidate, "opensim", "motion", "num_coordinate_jumps"
+    )
 
     baseline_whole_body_jerk = _number(
-        baseline, "smpl", "smoothness", "whole_body_pose_jerk"
+        baseline, "smpl", "pose_smoothness", "jerk", "rms"
     )
     candidate_whole_body_jerk = _number(
-        candidate, "smpl", "smoothness", "whole_body_pose_jerk"
+        candidate, "smpl", "pose_smoothness", "jerk", "rms"
     )
     baseline_root_translation_jerk = _number(
-        baseline, "smpl", "smoothness", "root_translation_jerk"
+        baseline, "smpl", "root_smoothness", "jerk", "rms"
     )
     candidate_root_translation_jerk = _number(
-        candidate, "smpl", "smoothness", "root_translation_jerk"
+        candidate, "smpl", "root_smoothness", "jerk", "rms"
     )
-    baseline_coordinate_jerk = _number(baseline, "opensim", "coordinate_jerk")
-    candidate_coordinate_jerk = _number(candidate, "opensim", "coordinate_jerk")
+    baseline_coordinate_jerk = _number(
+        baseline, "opensim", "motion", "coordinate_jerk", "rms"
+    )
+    candidate_coordinate_jerk = _number(
+        candidate, "opensim", "motion", "coordinate_jerk", "rms"
+    )
 
     target_improvements = {
         "whole_body_pose_jerk_improved": _improved(
