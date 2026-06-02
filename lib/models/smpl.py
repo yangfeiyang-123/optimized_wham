@@ -3,6 +3,7 @@ from __future__ import print_function
 from __future__ import division
 
 import os, sys
+import types
 
 import torch
 import numpy as np
@@ -14,10 +15,41 @@ from smplx.lbs import vertices2joints
 
 from configs import constants as _C
 
+
+def _ensure_chumpy_compat():
+    if 'chumpy.ch' in sys.modules:
+        return
+
+    class _ChumpyCompat(object):
+        """Compatibility shim for legacy SMPL pickles that store shapedirs as chumpy.Ch."""
+
+        def __array__(self, dtype=None):
+            array = np.asarray(self.x)
+            if dtype is not None:
+                array = array.astype(dtype, copy=False)
+            return array
+
+        @property
+        def shape(self):
+            return np.asarray(self.x).shape
+
+        @property
+        def ndim(self):
+            return np.asarray(self.x).ndim
+
+        def __getitem__(self, item):
+            return np.asarray(self.x)[item]
+
+    chumpy_module = types.ModuleType('chumpy.ch')
+    chumpy_module.Ch = _ChumpyCompat
+    sys.modules['chumpy.ch'] = chumpy_module
+
+
 class SMPL(_SMPL):
     """ Extension of the official SMPL implementation to support more joints """
 
     def __init__(self, *args, **kwargs):
+        _ensure_chumpy_compat()
         sys.stdout = open(os.devnull, 'w')
         super(SMPL, self).__init__(*args, **kwargs)
         sys.stdout = sys.__stdout__
