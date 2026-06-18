@@ -42,6 +42,7 @@ def _ensure_chumpy_compat():
 
     chumpy_module = types.ModuleType('chumpy.ch')
     chumpy_module.Ch = _ChumpyCompat
+    chumpy_module.pif = lambda msg: None
     sys.modules['chumpy.ch'] = chumpy_module
 
 class SMPL(_SMPL):

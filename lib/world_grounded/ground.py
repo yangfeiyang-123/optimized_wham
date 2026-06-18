@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Optional
 
 import numpy as np
 
@@ -33,7 +34,7 @@ def _validate_foot_points(foot_points) -> np.ndarray:
     return foot_points
 
 
-def _validate_contact(wham_contact, expected_shape: tuple[int, int]) -> np.ndarray | None:
+def _validate_contact(wham_contact, expected_shape: tuple[int, int]) -> Optional[np.ndarray]:
     if wham_contact is None:
         return None
     contact = np.asarray(wham_contact, dtype=np.float64)
@@ -128,7 +129,7 @@ def _low_percentile_ground(heights: np.ndarray) -> float:
     return float(np.percentile(finite, 5.0))
 
 
-def _initial_weights(foot_points: np.ndarray, fps: float, wham_contact: np.ndarray | None) -> tuple[np.ndarray, str]:
+def _initial_weights(foot_points: np.ndarray, fps: float, wham_contact: Optional[np.ndarray]) -> tuple[np.ndarray, str]:
     vel = _velocity(foot_points, fps)
     horizontal_speed = np.linalg.norm(vel[..., [0, 2]], axis=-1)
     vertical_speed = np.abs(vel[..., 1])
@@ -152,7 +153,7 @@ def compute_contact_confidence(
     foot_points: np.ndarray,
     fps: float,
     ground_y: float,
-    wham_contact: np.ndarray | None = None,
+    wham_contact: Optional[np.ndarray] = None,
     height_threshold: float = 0.08,
     horizontal_speed_threshold: float = 0.25,
     vertical_speed_threshold: float = 0.25,
@@ -193,7 +194,7 @@ def compute_contact_confidence(
 def estimate_ground(
     foot_points: np.ndarray,
     fps: float,
-    wham_contact: np.ndarray | None = None,
+    wham_contact: Optional[np.ndarray] = None,
     min_weighted_samples: int = 8,
 ) -> GroundEstimate:
     foot_points = _validate_foot_points(foot_points)

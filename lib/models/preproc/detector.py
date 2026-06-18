@@ -97,7 +97,11 @@ def _torch_load_weights_only_compat():
 
     def compat_torch_load(*args, **kwargs):
         kwargs.setdefault("weights_only", False)
-        return original_torch_load(*args, **kwargs)
+        try:
+            return original_torch_load(*args, **kwargs)
+        except TypeError:
+            kwargs.pop("weights_only", None)
+            return original_torch_load(*args, **kwargs)
 
     torch.load = compat_torch_load
     try:

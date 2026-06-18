@@ -17,6 +17,13 @@ def _patch_fast_pipeline(monkeypatch, commands):
             out_dir = Path(cmd[cmd.index("--out-dir") + 1])
             out_dir.mkdir(parents=True, exist_ok=True)
             (out_dir / "corrected_smpl.pkl").write_bytes(b"")
+        if script == "export_contact_preserving_reference.py":
+            out_dir = Path(cmd[cmd.index("--out-dir") + 1])
+            out_dir.mkdir(parents=True, exist_ok=True)
+            (out_dir / "manifest.json").write_text(
+                '{"quality": {"usable_for_training": true, "quality_tier": "B"}}',
+                encoding="utf-8",
+            )
 
     monkeypatch.setattr(pipeline, "require_file", lambda path, label: path)
     monkeypatch.setattr(
@@ -164,3 +171,85 @@ def test_pipeline_skip_ik_omits_run_ik_and_prints_skipped_motion(
     retarget_cmd = commands[-1]
     assert "--run-ik" not in retarget_cmd
     assert "opensim_motion: <not run; --skip-ik>" in capsys.readouterr().out
+
+
+def test_pipeline_export_bundle_with_skip_ik_still_writes_retarget_assets(
+    monkeypatch, tmp_path
+):
+    commands = []
+    _patch_fast_pipeline(monkeypatch, commands)
+    video = tmp_path / "clip.mp4"
+    output_root = tmp_path / "output"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "video_to_fixed_smpl_to_opensim.py",
+            "--video",
+            str(video),
+            "--output-pth",
+            str(output_root),
+            "--world-grounded",
+            "--contact-preserving",
+            "--export-reference-bundle",
+            "--skip-ik",
+        ],
+    )
+
+    assert pipeline.main() == 0
+
+    script_names = [Path(cmd[1]).name for cmd in commands]
+    assert "export_contact_preserving_reference.py" in script_names
+    assert script_names[-1] == "retarget_smpl_to_opensim.py"
+    assert "--run-ik" not in commands[-1]
+
+
+def test_pipeline_rejects_reference_bundle_below_requested_quality_tier(
+    monkeypatch, tmp_path
+):
+    commands = []
+
+    def fake_run(cmd, cwd=pipeline.REPO_ROOT):
+        commands.append(cmd)
+        script = Path(cmd[1]).name
+        if script == "world_grounded_smpl_optimizer.py":
+            out_dir = Path(cmd[cmd.index("--out-dir") + 1])
+            out_dir.mkdir(parents=True, exist_ok=True)
+            (out_dir / "optimized_canonical_wham_output.pkl").write_bytes(b"")
+        if script == "export_contact_preserving_reference.py":
+            out_dir = Path(cmd[cmd.index("--out-dir") + 1])
+            out_dir.mkdir(parents=True, exist_ok=True)
+            (out_dir / "manifest.json").write_text(
+                '{"quality": {"usable_for_training": true, "quality_tier": "C"}}',
+                encoding="utf-8",
+            )
+
+    monkeypatch.setattr(pipeline, "require_file", lambda path, label: path)
+    monkeypatch.setattr(
+        pipeline,
+        "load_fixed_beta_report",
+        lambda report_path: {"pipeline_beta_variation_after_max_abs": 0.0},
+    )
+    monkeypatch.setattr(pipeline, "run", fake_run)
+    video = tmp_path / "clip.mp4"
+    output_root = tmp_path / "output"
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "video_to_fixed_smpl_to_opensim.py",
+            "--video",
+            str(video),
+            "--output-pth",
+            str(output_root),
+            "--world-grounded",
+            "--contact-preserving",
+            "--export-reference-bundle",
+            "--skip-ik",
+            "--quality-tier",
+            "B",
+        ],
+    )
+
+    with pytest.raises(RuntimeError, match="below requested quality tier"):
+        pipeline.main()
+
+    assert "retarget_smpl_to_opensim.py" not in [Path(cmd[1]).name for cmd in commands]

@@ -46,6 +46,11 @@ def _not_worse(before: dict, after: dict, *keys: str) -> bool:
     return before_value is not None and after_value is not None and after_value <= before_value
 
 
+def _speed_bounded(data: dict, *keys: str, max_value: float) -> bool:
+    value = _nested_number(data, *keys)
+    return value is None or value <= float(max_value)
+
+
 def build_validation_summary(
     *,
     beta_variation_after_max_abs: float,
@@ -54,6 +59,7 @@ def build_validation_summary(
     after: dict,
     pose_delta: dict,
     opensim: dict,
+    max_contact_speed_mps: float = 12.0,
 ) -> dict:
     upper_body_max_abs = _nested_number(pose_delta, "upper_body_max_abs")
     lower_body_max_abs = _nested_number(pose_delta, "lower_body_max_abs")
@@ -75,6 +81,12 @@ def build_validation_summary(
         "frame_count_unchanged": bool(frame_count_unchanged),
         "smpl_foot_penetration_reduced": _not_worse(before, after, "penetration", "max_penetration"),
         "smpl_contact_foot_sliding_reduced": _not_worse(before, after, "sliding", "mean_contact_speed"),
+        "smpl_contact_speed_spike_bounded": _speed_bounded(
+            after,
+            "sliding",
+            "max_contact_speed",
+            max_value=float(max_contact_speed_mps),
+        ),
         "root_vertical_jitter_not_worse": _not_worse(before, after, "root", "rms_vertical_accel"),
         "upper_body_pose_delta_small": upper_body_max_abs is not None and upper_body_max_abs <= 0.05,
         "lower_body_pose_delta_bounded": lower_body_max_abs is not None and lower_body_max_abs <= 1.2,

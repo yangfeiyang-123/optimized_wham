@@ -1,1 +1,17 @@
 .worktrees/
+
+# Python/runtime caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Local licensed models, checkpoints, datasets, and generated media
+body_models/
+checkpoints
+checkpoints/
+dataset/
+videos/
+
+# Generated WHAM/optimization outputs. Commit small summaries explicitly with
+# `git add -f` when they are part of an experiment report.
+output/

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any
+from typing import Any, Optional
 
 import numpy as np
 
@@ -77,7 +77,7 @@ def _merge_per_frame_field(
     ordered_frames: list[int],
     samples: Mapping[int, tuple[int, Any, int]],
     results: Mapping[Any, Mapping[str, Any]],
-) -> np.ndarray | None:
+) -> Optional[np.ndarray]:
     values = []
     for frame_id in ordered_frames:
         _, key, local_idx = samples[frame_id]
@@ -95,7 +95,7 @@ def _merge_betas(
     ordered_frames: list[int],
     samples: Mapping[int, tuple[int, Any, int]],
     results: Mapping[Any, Mapping[str, Any]],
-) -> np.ndarray | None:
+) -> Optional[np.ndarray]:
     values = []
     for frame_id in ordered_frames:
         _, key, local_idx = samples[frame_id]
@@ -131,7 +131,7 @@ def merge_tracks(results: Mapping[Any, Mapping[str, Any]]) -> dict[str, Any]:
     return merged
 
 
-def select_track(results: Mapping[Any, Mapping[str, Any]], track_id: str | None = "merge"):
+def select_track(results: Mapping[Any, Mapping[str, Any]], track_id: Optional[str] = "merge"):
     if track_id is None:
         key = sorted(results.keys(), key=lambda x: str(x))[0]
         return key, results[key]

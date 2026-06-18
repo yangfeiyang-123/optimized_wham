@@ -5,6 +5,8 @@ from lib.smpl_optimization.losses import (
     foot_lock_loss,
     penetration_loss,
     smoothness_loss,
+    stance_anchor_xz_loss,
+    stance_anchor_y_loss,
     weighted_l2,
 )
 
@@ -65,3 +67,18 @@ def test_temporal_losses_return_zero_for_short_sequences():
 
     assert foot_lock_loss(points, contact).item() == 0.0
     assert smoothness_loss(value).item() == 0.0
+
+
+def test_stance_anchor_losses_only_use_masked_frames():
+    points = torch.tensor(
+        [
+            [[0.0, 0.0, 0.0]],
+            [[1.0, 2.0, 3.0]],
+        ],
+        dtype=torch.float32,
+    )
+    target_xz = torch.zeros((2, 1, 2), dtype=torch.float32)
+    mask = torch.tensor([[0.0], [1.0]], dtype=torch.float32)
+
+    assert torch.isclose(stance_anchor_xz_loss(points, target_xz, mask, huber_delta=10.0), torch.tensor(2.5))
+    assert torch.isclose(stance_anchor_y_loss(points, ground_y=0.0, mask=mask, huber_delta=10.0), torch.tensor(2.0))

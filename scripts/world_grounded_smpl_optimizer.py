@@ -34,6 +34,9 @@ def optimize_record(
     record: dict,
     fps: float,
     align_ground_to_zero: bool = True,
+    root_smooth_axes: tuple[str, ...] = ("y",),
+    max_xz_delta: float = 0.03,
+    max_y_delta: float = 0.30,
 ) -> tuple[dict, dict, dict, dict]:
     if "trans_world" not in record:
         raise ValueError("Record must contain trans_world for root translation optimization.")
@@ -54,6 +57,9 @@ def optimize_record(
         ground.contact_confidence,
         ground_y=ground.ground_y,
         fps=fps,
+        smooth_axes=root_smooth_axes,
+        max_xz_delta=max_xz_delta,
+        max_y_delta=max_y_delta,
     )
 
     delta = root.delta.astype(np.float32)
@@ -105,6 +111,13 @@ def parse_args():
         action="store_true",
         help="Keep the optimized trajectory in WHAM world height instead of shifting estimated ground to OpenSim Y=0.",
     )
+    parser.add_argument(
+        "--root-smooth-axes",
+        default="y",
+        help="Comma-separated root axes to smooth before vertical penetration correction. Default preserves horizontal X/Z.",
+    )
+    parser.add_argument("--max-xz-delta", type=float, default=0.03)
+    parser.add_argument("--max-y-delta", type=float, default=0.30)
     return parser.parse_args()
 
 
@@ -120,6 +133,9 @@ def main() -> int:
         record,
         fps=args.fps,
         align_ground_to_zero=not args.no_align_ground_to_zero,
+        root_smooth_axes=tuple(axis.strip() for axis in args.root_smooth_axes.split(",") if axis.strip()),
+        max_xz_delta=args.max_xz_delta,
+        max_y_delta=args.max_y_delta,
     )
 
     optimized = {track_id: optimized_record}

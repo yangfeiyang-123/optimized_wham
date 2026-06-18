@@ -60,6 +60,29 @@ def test_validation_summary_marks_degraded_when_beta_changes():
     assert summary["checks"]["beta_variation_after_max_abs"] is False
 
 
+def test_validation_summary_rejects_contact_speed_spike_even_when_mean_sliding_improves():
+    summary = build_validation_summary(
+        beta_variation_after_max_abs=0.0,
+        frame_count_unchanged=True,
+        before={
+            "penetration": {"max_penetration": 0.2},
+            "sliding": {"mean_contact_speed": 0.3, "max_contact_speed": 5.0},
+            "root": {"rms_vertical_accel": 0.2},
+        },
+        after={
+            "penetration": {"max_penetration": 0.05},
+            "sliding": {"mean_contact_speed": 0.1, "max_contact_speed": 13.0},
+            "root": {"rms_vertical_accel": 0.1},
+        },
+        pose_delta={"upper_body_max_abs": 0.01, "lower_body_max_abs": 0.3},
+        opensim={"ik_rms_not_worse": True, "ground_clearance_not_worse": True},
+        max_contact_speed_mps=12.0,
+    )
+
+    assert summary["success"] is False
+    assert summary["checks"]["smpl_contact_speed_spike_bounded"] is False
+
+
 def test_validation_summary_keeps_not_run_opensim_out_of_primary_checks():
     summary = build_validation_summary(
         beta_variation_after_max_abs=0.0,

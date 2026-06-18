@@ -12,6 +12,8 @@ from lib.smpl_optimization.losses import (
     foot_lock_loss,
     penetration_loss,
     smoothness_loss,
+    stance_anchor_xz_loss,
+    stance_anchor_y_loss,
 )
 from lib.smpl_optimization.metrics import (
     beta_variation_max_abs,
@@ -23,6 +25,8 @@ from lib.smpl_optimization.metrics import (
 from lib.smpl_optimization.reports import build_validation_summary, to_jsonable
 from lib.smpl_optimization.smpl_forward import expand_betas, smpl_forward_axis_angle
 from lib.world_grounded.foot_points import get_record_contact, get_record_foot_points
+from lib.world_grounded.contact_segments import extract_stance_segments
+from lib.world_grounded.stance_anchor import compute_stance_anchors, rasterize_anchors
 
 
 LOWER_BODY_SMPL_JOINTS = (1, 2, 4, 5, 7, 8, 10, 11)
@@ -47,6 +51,16 @@ class LowerBodyOptimizerConfig:
     w_root_smooth: float = 5.0
     w_wham_prior: float = 2.0
     w_root_prior: float = 20.0
+    use_stance_anchor_loss: bool = True
+    w_stance_anchor_xz: float = 80.0
+    w_stance_anchor_y: float = 60.0
+    stance_enter_threshold: float = 0.55
+    stance_exit_threshold: float = 0.30
+    stance_min_frames: int = 4
+    stance_merge_gap: int = 2
+    use_huber: bool = True
+    huber_delta: float = 0.03
+    max_lower_body_pose_delta: float = 0.7
 
 
 _SHIFTED_3D_SEQUENCE_KEYS = ("verts", "feet_world", "feet_refined", "feet")
@@ -198,6 +212,11 @@ def optimize_lower_body_pose_smpl(
     verts_chunks = []
     final_root_residual_y_max_abs = 0.0
     loss_value = 0.0
+    anchor_targets_np, anchor_mask_np, anchor_report = _build_anchor_targets_for_pose_pass(
+        record,
+        config,
+        n_frames=n_frames,
+    )
 
     chunk_size = max(1, int(config.chunk_size))
     for start in range(0, n_frames, chunk_size):
@@ -219,6 +238,13 @@ def optimize_lower_body_pose_smpl(
         contact_np = _contact_for_feet(record, n_frames=n_frames, n_feet=n_feet)[start:end]
         contact = torch.tensor(contact_np, dtype=torch.float32, device=device)
         frame_w = torch.tensor(frame_weights_np[start:end, None], dtype=torch.float32, device=device)
+        anchor_targets = None
+        anchor_mask = None
+        if config.use_stance_anchor_loss and anchor_targets_np is not None and anchor_mask_np is not None:
+            fitted_targets = _fit_anchor_targets(anchor_targets_np[start:end], window_len, n_feet)
+            fitted_mask = _fit_contact_shape(anchor_mask_np[start:end], n_frames=window_len, n_points=n_feet)
+            anchor_targets = torch.tensor(fitted_targets, dtype=torch.float32, device=device)
+            anchor_mask = torch.tensor(fitted_mask, dtype=torch.float32, device=device)
 
         for _ in range(int(config.pose_iterations)):
             optimizer.zero_grad()
@@ -245,6 +271,24 @@ def optimize_lower_body_pose_smpl(
                 + config.w_wham_prior * torch.mean((pose_residual[:, pose_mask]) ** 2)
                 + config.w_root_prior * torch.mean(root_residual * root_residual)
             )
+            if anchor_targets is not None and anchor_mask is not None:
+                loss = (
+                    loss
+                    + config.w_stance_anchor_xz
+                    * stance_anchor_xz_loss(
+                        foot,
+                        anchor_targets[..., [0, 2]],
+                        anchor_mask,
+                        huber_delta=config.huber_delta,
+                    )
+                    + config.w_stance_anchor_y
+                    * stance_anchor_y_loss(
+                        foot,
+                        ground_y=config.ground_y,
+                        mask=anchor_mask,
+                        huber_delta=config.huber_delta,
+                    )
+                )
             loss.backward()
             optimizer.step()
             loss_value = float(loss.detach().cpu())
@@ -297,6 +341,7 @@ def optimize_lower_body_pose_smpl(
         "optimized_pose_key": pose_key,
         "optimized_pose_dims": np.where(pose_mask_np)[0].tolist(),
         "root_residual_y_max_abs": final_root_residual_y_max_abs,
+        **anchor_report,
     }
 
 
@@ -335,6 +380,8 @@ def _quality_report(record: dict, config: LowerBodyOptimizerConfig) -> dict:
         "foot_point_source": foot_result.source,
         "foot_point_labels": foot_result.labels,
         "contact_available": contact_available,
+        "num_stance_segments": _stance_segment_count(contact, foot_result.labels, config),
+        "stance_coverage_ratio": float(np.mean(contact > float(config.stance_exit_threshold))) if contact.size else 0.0,
         "penetration": foot_penetration_depth(points[:, :, 1], ground_y=config.ground_y),
         "sliding": contact_foot_sliding(
             points,
@@ -451,6 +498,17 @@ def _fit_contact_shape(contact: np.ndarray, *, n_frames: int, n_points: int) -> 
     return fitted
 
 
+def _fit_anchor_targets(value: np.ndarray, n_frames: int, n_points: int) -> np.ndarray:
+    fitted = np.zeros((n_frames, n_points, 3), dtype=np.float32)
+    arr = np.asarray(value, dtype=np.float32)
+    if arr.ndim != 3 or arr.shape[0] == 0:
+        return fitted
+    rows = min(n_frames, arr.shape[0])
+    cols = min(n_points, arr.shape[1])
+    fitted[:rows, :cols] = arr[:rows, :cols]
+    return fitted
+
+
 def _fit_2d_sequence(value: np.ndarray, *, n_frames: int, n_cols: int) -> np.ndarray:
     fitted = np.zeros((n_frames, n_cols), dtype=np.float32)
     value = np.asarray(value, dtype=np.float32)
@@ -476,6 +534,59 @@ def _fit_frame_weights(frame_weights: np.ndarray, *, n_frames: int) -> np.ndarra
     if rows < n_frames:
         fitted[rows:] = fitted[rows - 1]
     return fitted
+
+
+def _build_anchor_targets_for_pose_pass(
+    record: dict,
+    config: LowerBodyOptimizerConfig,
+    *,
+    n_frames: int,
+) -> tuple[Optional[np.ndarray], Optional[np.ndarray], dict]:
+    if not config.use_stance_anchor_loss:
+        return None, None, {"stance_anchor_loss_used": False}
+    foot_result = _safe_foot_points(record)
+    if foot_result is None:
+        return None, None, {"stance_anchor_loss_used": False, "stance_anchor_reason": "missing_foot_points"}
+
+    points = foot_result.points
+    contact = get_record_contact(record, n_frames=n_frames, n_points=points.shape[1])
+    if contact is None:
+        return None, None, {"stance_anchor_loss_used": False, "stance_anchor_reason": "missing_contact"}
+    contact = _fit_contact_shape(contact, n_frames=n_frames, n_points=points.shape[1])
+    segments, stance_mask = extract_stance_segments(
+        contact,
+        foot_result.labels,
+        enter_threshold=config.stance_enter_threshold,
+        exit_threshold=config.stance_exit_threshold,
+        min_segment_len=config.stance_min_frames,
+        merge_gap=config.stance_merge_gap,
+    )
+    anchors = compute_stance_anchors(points[:n_frames], contact, segments, ground_y=config.ground_y)
+    targets, anchor_mask = rasterize_anchors(anchors, n_frames=n_frames, n_feet=points.shape[1])
+    return (
+        targets,
+        anchor_mask.astype(np.float32),
+        {
+            "stance_anchor_loss_used": bool(anchors),
+            "num_stance_segments": int(len(segments)),
+            "num_stance_anchors": int(len(anchors)),
+            "stance_coverage_ratio": float(np.mean(stance_mask)) if stance_mask.size else 0.0,
+        },
+    )
+
+
+def _stance_segment_count(contact: np.ndarray, labels: list[str], config: LowerBodyOptimizerConfig) -> int:
+    if contact.size == 0:
+        return 0
+    segments, _ = extract_stance_segments(
+        contact,
+        labels,
+        enter_threshold=config.stance_enter_threshold,
+        exit_threshold=config.stance_exit_threshold,
+        min_segment_len=config.stance_min_frames,
+        merge_gap=config.stance_merge_gap,
+    )
+    return int(len(segments))
 
 
 def _sync_lower_body_pose_fields(record: dict, *, source_key: str) -> None:

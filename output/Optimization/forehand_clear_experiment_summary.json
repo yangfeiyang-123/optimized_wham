@@ -1,0 +1,404 @@
+{
+  "source_manifest": "output/forehand_clear/manifest_by_video.tsv",
+  "output_dir": "output/Optimization",
+  "num_sequences": 27,
+  "stages": [
+    {
+      "id": "00_raw_wham",
+      "description": "Original WHAM signal",
+      "manifest_key": "raw_wham"
+    },
+    {
+      "id": "01_fixed_beta",
+      "description": "Fixed-beta canonical signal",
+      "manifest_key": "fixed_beta"
+    },
+    {
+      "id": "02_world_grounded",
+      "description": "World-grounded signal",
+      "relative_path": "world_grounded/optimized_canonical_wham_output.pkl"
+    },
+    {
+      "id": "03_lower_body_corrected",
+      "description": "Post-processed signal: world-grounded plus lower-body/contact correction",
+      "manifest_key": "corrected_smpl"
+    }
+  ],
+  "stage_aggregates": {
+    "00_raw_wham": {
+      "penetration0_max": {
+        "count": 27,
+        "mean": 0.899869985925926,
+        "median": 0.90105021,
+        "min": 0.87828839,
+        "max": 0.92598009
+      },
+      "penetration0_mean": {
+        "count": 27,
+        "mean": 0.8449352614814815,
+        "median": 0.84119332,
+        "min": 0.82939303,
+        "max": 0.87075108
+      },
+      "contact_mean_speed": {
+        "count": 27,
+        "mean": 0.3793110166666666,
+        "median": 0.38637319,
+        "min": 0.32112387,
+        "max": 0.44613716
+      },
+      "contact_max_speed": {
+        "count": 27,
+        "mean": 3.1470156014814816,
+        "median": 2.87240767,
+        "min": 1.96668398,
+        "max": 12.453372
+      },
+      "contact_num_sliding": {
+        "count": 27,
+        "mean": 341.7037037037037,
+        "median": 317.0,
+        "min": 219.0,
+        "max": 516.0
+      },
+      "root_rms_vertical_accel": {
+        "count": 27,
+        "mean": 0.0005385407407407408,
+        "median": 0.00053937,
+        "min": 0.00041255,
+        "max": 0.00066766
+      },
+      "beta_variation_max_abs": {
+        "count": 27,
+        "mean": 0.8544608037037037,
+        "median": 0.87978166,
+        "min": 0.60228729,
+        "max": 1.06080055
+      },
+      "pose_delta_upper_max_abs": {
+        "count": 27,
+        "mean": 0.0,
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "pose_delta_lower_max_abs": {
+        "count": 27,
+        "mean": 0.0,
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "frames": {
+        "count": 27,
+        "mean": 132.92592592592592,
+        "median": 119.0,
+        "min": 90.0,
+        "max": 190.0
+      }
+    },
+    "01_fixed_beta": {
+      "penetration0_max": {
+        "count": 27,
+        "mean": 0.899869985925926,
+        "median": 0.90105021,
+        "min": 0.87828839,
+        "max": 0.92598009
+      },
+      "penetration0_mean": {
+        "count": 27,
+        "mean": 0.8449352614814815,
+        "median": 0.84119332,
+        "min": 0.82939303,
+        "max": 0.87075108
+      },
+      "contact_mean_speed": {
+        "count": 27,
+        "mean": 0.3793110166666666,
+        "median": 0.38637319,
+        "min": 0.32112387,
+        "max": 0.44613716
+      },
+      "contact_max_speed": {
+        "count": 27,
+        "mean": 3.1470156014814816,
+        "median": 2.87240767,
+        "min": 1.96668398,
+        "max": 12.453372
+      },
+      "contact_num_sliding": {
+        "count": 27,
+        "mean": 341.7037037037037,
+        "median": 317.0,
+        "min": 219.0,
+        "max": 516.0
+      },
+      "root_rms_vertical_accel": {
+        "count": 27,
+        "mean": 0.0007744748148148148,
+        "median": 0.00073426,
+        "min": 0.00044807,
+        "max": 0.00288566
+      },
+      "beta_variation_max_abs": {
+        "count": 27,
+        "mean": 0.0,
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "pose_delta_upper_max_abs": {
+        "count": 27,
+        "mean": 0.0,
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "pose_delta_lower_max_abs": {
+        "count": 27,
+        "mean": 0.0,
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "frames": {
+        "count": 27,
+        "mean": 132.92592592592592,
+        "median": 119.0,
+        "min": 90.0,
+        "max": 190.0
+      }
+    },
+    "02_world_grounded": {
+      "penetration0_max": {
+        "count": 27,
+        "mean": 0.027908345555555554,
+        "median": 0.02580506,
+        "min": 0.01516855,
+        "max": 0.04448062
+      },
+      "penetration0_mean": {
+        "count": 27,
+        "mean": 0.002318142592592592,
+        "median": 0.00202833,
+        "min": 0.00055117,
+        "max": 0.00485902
+      },
+      "contact_mean_speed": {
+        "count": 27,
+        "mean": 0.3793110166666666,
+        "median": 0.38637319,
+        "min": 0.32112387,
+        "max": 0.44613716
+      },
+      "contact_max_speed": {
+        "count": 27,
+        "mean": 3.1470156014814816,
+        "median": 2.87240767,
+        "min": 1.96668398,
+        "max": 12.453372
+      },
+      "contact_num_sliding": {
+        "count": 27,
+        "mean": 341.7037037037037,
+        "median": 317.0,
+        "min": 219.0,
+        "max": 516.0
+      },
+      "root_rms_vertical_accel": {
+        "count": 27,
+        "mean": 0.0007497399999999999,
+        "median": 0.00065602,
+        "min": 0.00040235,
+        "max": 0.00146776
+      },
+      "beta_variation_max_abs": {
+        "count": 27,
+        "mean": 0.0,
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "pose_delta_upper_max_abs": {
+        "count": 27,
+        "mean": 0.0,
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "pose_delta_lower_max_abs": {
+        "count": 27,
+        "mean": 0.0,
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "frames": {
+        "count": 27,
+        "mean": 132.92592592592592,
+        "median": 119.0,
+        "min": 90.0,
+        "max": 190.0
+      }
+    },
+    "03_lower_body_corrected": {
+      "penetration0_max": {
+        "count": 27,
+        "mean": 0.004858264074074075,
+        "median": 0.00562263,
+        "min": 0.0,
+        "max": 0.00742149
+      },
+      "penetration0_mean": {
+        "count": 27,
+        "mean": 0.0003234174074074074,
+        "median": 0.00027194,
+        "min": 0.0,
+        "max": 0.00071612
+      },
+      "contact_mean_speed": {
+        "count": 27,
+        "mean": 0.27104937481481484,
+        "median": 0.28204158,
+        "min": 0.05947024,
+        "max": 0.39161345
+      },
+      "contact_max_speed": {
+        "count": 27,
+        "mean": 9.171738536666666,
+        "median": 9.69850159,
+        "min": 0.93712878,
+        "max": 11.62806797
+      },
+      "contact_num_sliding": {
+        "count": 27,
+        "mean": 65.51851851851852,
+        "median": 62.0,
+        "min": 34.0,
+        "max": 108.0
+      },
+      "root_rms_vertical_accel": {
+        "count": 27,
+        "mean": 0.0006635348148148147,
+        "median": 0.00064548,
+        "min": 0.00022517,
+        "max": 0.00109836
+      },
+      "beta_variation_max_abs": {
+        "count": 27,
+        "mean": 0.0,
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "pose_delta_upper_max_abs": {
+        "count": 27,
+        "mean": 0.0,
+        "median": 0.0,
+        "min": 0.0,
+        "max": 0.0
+      },
+      "pose_delta_lower_max_abs": {
+        "count": 27,
+        "mean": 0.43826257333333324,
+        "median": 0.42781872,
+        "min": 0.35192534,
+        "max": 0.60286313
+      },
+      "frames": {
+        "count": 27,
+        "mean": 132.92592592592592,
+        "median": 119.0,
+        "min": 90.0,
+        "max": 190.0
+      }
+    }
+  },
+  "postprocessed_vs_raw": {
+    "penetration0_max": {
+      "count": 27,
+      "mean_percent_reduction": 99.46139796218257,
+      "median_percent_reduction": 99.37845495333585,
+      "num_improved": 27
+    },
+    "penetration0_mean": {
+      "count": 27,
+      "mean_percent_reduction": 99.96189067946014,
+      "median_percent_reduction": 99.96776361571746,
+      "num_improved": 27
+    },
+    "contact_mean_speed": {
+      "count": 27,
+      "mean_percent_reduction": 28.682798922763535,
+      "median_percent_reduction": 25.426015314546508,
+      "num_improved": 27
+    },
+    "contact_max_speed": {
+      "count": 27,
+      "mean_percent_reduction": -228.23172097839438,
+      "median_percent_reduction": -249.8458600730766,
+      "num_improved": 3
+    },
+    "contact_num_sliding": {
+      "count": 27,
+      "mean_percent_reduction": 79.46900293739897,
+      "median_percent_reduction": 79.6078431372549,
+      "num_improved": 27
+    },
+    "root_rms_vertical_accel": {
+      "count": 27,
+      "mean_percent_reduction": -22.909168062609737,
+      "median_percent_reduction": -22.885373236621174,
+      "num_improved": 5
+    }
+  },
+  "postprocessed_vs_world_grounded": {
+    "penetration0_max": {
+      "count": 27,
+      "mean_percent_reduction": 81.3427153940217,
+      "median_percent_reduction": 81.24351268298119,
+      "num_improved": 27
+    },
+    "penetration0_mean": {
+      "count": 27,
+      "mean_percent_reduction": 79.2244910488959,
+      "median_percent_reduction": 90.5505773606773,
+      "num_improved": 26
+    },
+    "contact_mean_speed": {
+      "count": 27,
+      "mean_percent_reduction": 28.682798922763535,
+      "median_percent_reduction": 25.426015314546508,
+      "num_improved": 27
+    },
+    "contact_max_speed": {
+      "count": 27,
+      "mean_percent_reduction": -228.23172097839438,
+      "median_percent_reduction": -249.8458600730766,
+      "num_improved": 3
+    },
+    "contact_num_sliding": {
+      "count": 27,
+      "mean_percent_reduction": 79.46900293739897,
+      "median_percent_reduction": 79.6078431372549,
+      "num_improved": 27
+    },
+    "root_rms_vertical_accel": {
+      "count": 27,
+      "mean_percent_reduction": 9.901666087656736,
+      "median_percent_reduction": 0.0,
+      "num_improved": 10
+    }
+  },
+  "validation": {
+    "success_count": 27,
+    "usable_for_training_count": 27,
+    "quality_tier_counts": {
+      "B": 27
+    },
+    "frame_count_unchanged_count": 27,
+    "upper_body_pose_delta_small_count": 27,
+    "lower_body_pose_delta_bounded_count": 27,
+    "fps_metadata_match_count": 27
+  }
+}

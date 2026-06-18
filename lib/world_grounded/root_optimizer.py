@@ -81,6 +81,9 @@ def optimize_root_translation(
     fps: float,
     smooth_window: int = 9,
     contact_threshold: float = 0.35,
+    smooth_axes: tuple[str, ...] = ("y",),
+    max_xz_delta: float = 0.03,
+    max_y_delta: float = 0.30,
 ) -> RootOptimizationResult:
     trans_world, foot_points, contact_confidence = _validate_inputs(
         trans_world,
@@ -88,8 +91,18 @@ def optimize_root_translation(
         contact_confidence,
     )
 
+    axis_map = {"x": 0, "y": 1, "z": 2}
+    smooth_axes = tuple(str(axis).lower() for axis in smooth_axes)
+    invalid_axes = sorted(set(smooth_axes) - set(axis_map))
+    if invalid_axes:
+        raise ValueError(f"smooth_axes contains unsupported axes: {invalid_axes}")
+
     smoothed_trans = _safe_savgol(trans_world, smooth_window)
-    delta = smoothed_trans - trans_world
+    delta = np.zeros_like(trans_world)
+    for axis in smooth_axes:
+        idx = axis_map[axis]
+        limit = float(max_y_delta) if axis == "y" else float(max_xz_delta)
+        delta[:, idx] = np.clip(smoothed_trans[:, idx] - trans_world[:, idx], -limit, limit)
     foot_after_smooth = foot_points + delta[:, None, :]
 
     active = contact_confidence > float(contact_threshold)
@@ -106,10 +119,13 @@ def optimize_root_translation(
     correction_y = _safe_savgol(correction_y[:, None], smooth_window)[:, 0]
     correction_y = np.maximum(correction_y, 0.0)
     delta[:, 1] += correction_y
+    delta[:, 1] = np.clip(delta[:, 1], -float(max_y_delta), float(max_y_delta))
     optimized = trans_world + delta
 
     before_mean, before_max = _penetration_cm(foot_points[..., 1], ground_y)
     after_mean, after_max = _penetration_cm((foot_points + delta[:, None, :])[..., 1], ground_y)
+    abs_delta_cm = np.abs(delta) * 100.0
+    root_delta_xz_cm = np.linalg.norm(delta[:, [0, 2]], axis=-1) * 100.0
     report = {
         "root_acceleration_before": _root_accel_score(trans_world, fps),
         "root_acceleration_after": _root_accel_score(optimized, fps),
@@ -119,6 +135,16 @@ def optimize_root_translation(
         "foot_penetration_max_cm_after": after_max,
         "root_delta_mean_cm": float(np.mean(np.linalg.norm(delta, axis=-1)) * 100.0),
         "root_delta_max_cm": float(np.max(np.linalg.norm(delta, axis=-1)) * 100.0),
+        "root_delta_x_mean_cm": float(np.mean(abs_delta_cm[:, 0])),
+        "root_delta_x_max_cm": float(np.max(abs_delta_cm[:, 0])),
+        "root_delta_y_mean_cm": float(np.mean(abs_delta_cm[:, 1])),
+        "root_delta_y_max_cm": float(np.max(abs_delta_cm[:, 1])),
+        "root_delta_z_mean_cm": float(np.mean(abs_delta_cm[:, 2])),
+        "root_delta_z_max_cm": float(np.max(abs_delta_cm[:, 2])),
+        "root_delta_xz_mean_cm": float(np.mean(root_delta_xz_cm)),
+        "root_delta_xz_max_cm": float(np.max(root_delta_xz_cm)),
+        "root_smooth_axes": list(smooth_axes),
+        "horizontal_root_preserved": not ("x" in smooth_axes or "z" in smooth_axes),
     }
     return RootOptimizationResult(
         optimized_trans_world=optimized.astype(np.float32),

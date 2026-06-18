@@ -46,3 +46,32 @@ def smoothness_loss(value):
 
     acceleration = value[2:] - (2 * value[1:-1]) + value[:-2]
     return (acceleration**2).mean()
+
+
+def huber_l2(error, delta=0.03):
+    threshold = torch.as_tensor(delta, dtype=error.dtype, device=error.device)
+    abs_error = torch.abs(error)
+    quadratic = torch.minimum(abs_error, threshold)
+    linear = abs_error - quadratic
+    return 0.5 * quadratic**2 + threshold * linear
+
+
+def stance_anchor_xz_loss(points, target_xz, mask, huber_delta=0.03):
+    if points.numel() == 0:
+        return _zero_like_scalar(points)
+    error = points[..., [0, 2]] - target_xz
+    weight = mask.to(dtype=points.dtype).unsqueeze(-1)
+    denom = torch.clamp(weight.sum() * 2.0, min=1.0)
+    return (huber_l2(error, huber_delta) * weight).sum() / denom
+
+
+def stance_anchor_y_loss(points, ground_y=0.0, mask=None, huber_delta=0.03):
+    if points.numel() == 0:
+        return _zero_like_scalar(points)
+    target = torch.as_tensor(ground_y, dtype=points.dtype, device=points.device)
+    error = points[..., 1] - target
+    if mask is None:
+        return huber_l2(error, huber_delta).mean()
+    weight = mask.to(dtype=points.dtype)
+    denom = torch.clamp(weight.sum(), min=1.0)
+    return (huber_l2(error, huber_delta) * weight).sum() / denom

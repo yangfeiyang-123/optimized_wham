@@ -83,6 +83,38 @@ def require_file(path: Path, label: str) -> Path:
     return path
 
 
+def quality_tier_is_allowed(actual_tier: str, requested_tier: str) -> bool:
+    if requested_tier == "all":
+        return True
+    order = {"A": 0, "B": 1, "C": 2, "D": 3}
+    actual = order.get(str(actual_tier).upper())
+    requested = order.get(str(requested_tier).upper())
+    return actual is not None and requested is not None and actual <= requested
+
+
+def enforce_reference_bundle_quality(manifest_path: Path, requested_tier: str) -> dict:
+    manifest = json.loads(
+        require_file(manifest_path, "reference manifest").read_text(encoding="utf-8")
+    )
+    quality = manifest.get("quality", {})
+    if not isinstance(quality, dict):
+        raise RuntimeError(f"reference manifest quality is missing or invalid: {manifest_path}")
+
+    tier = str(quality.get("quality_tier", "")).upper()
+    usable = bool(quality.get("usable_for_training", False))
+    if not usable:
+        raise RuntimeError(
+            f"reference bundle is not usable for training: {manifest_path}; "
+            f"quality_tier={tier or '<missing>'}"
+        )
+    if not quality_tier_is_allowed(tier, requested_tier):
+        raise RuntimeError(
+            f"reference bundle quality tier {tier or '<missing>'} is below requested "
+            f"quality tier {requested_tier}: {manifest_path}"
+        )
+    return quality
+
+
 def load_fixed_beta_report(report_path: Path) -> dict:
     report = json.loads(report_path.read_text(encoding="utf-8"))
     tracks = report.get("tracks", {})
@@ -210,6 +242,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--lower-body-max-root-y-shift", type=float, default=0.25)
     parser.add_argument("--disable-lower-body-pose-pass", action="store_true")
     parser.add_argument("--lower-body-pose-iterations", type=int, default=80)
+    parser.add_argument("--contact-preserving", action="store_true")
+    parser.add_argument("--export-reference-bundle", action="store_true")
+    parser.add_argument("--reference-bundle-out-dir", default=None)
+    parser.add_argument("--root-smooth-axes", default="y")
+    parser.add_argument("--stance-enter-threshold", type=float, default=0.55)
+    parser.add_argument("--stance-exit-threshold", type=float, default=0.30)
+    parser.add_argument("--quality-tier", choices=["A", "B", "C", "all"], default="B")
     return parser
 
 
@@ -224,6 +263,10 @@ def main() -> int:
         parser.error(
             "--optimize-lower-body requires --world-grounded so ground_y=0 is meaningful."
         )
+    if args.contact_preserving and not args.world_grounded:
+        parser.error("--contact-preserving requires --world-grounded")
+    if args.export_reference_bundle and not args.contact_preserving:
+        parser.error("--export-reference-bundle requires --contact-preserving")
 
     video = Path(args.video).resolve()
     require_file(video, "input video")
@@ -243,6 +286,11 @@ def main() -> int:
         Path(args.lower_body_out_dir).resolve()
         if args.lower_body_out_dir
         else output_root / "_lower_body_optimized" / safe_ascii_name(sequence)
+    )
+    reference_bundle_out = (
+        Path(args.reference_bundle_out_dir).resolve()
+        if args.reference_bundle_out_dir
+        else output_root / "_reference_bundles" / safe_ascii_name(sequence)
     )
     if args.retarget_out_dir:
         retarget_out = Path(args.retarget_out_dir).resolve()
@@ -341,6 +389,8 @@ def main() -> int:
             str(args.track_id),
             "--device",
             args.device,
+            "--root-smooth-axes",
+            args.root_smooth_axes,
         ]
         run(wg_cmd)
         retarget_input_pkl = world_grounded_out / "optimized_canonical_wham_output.pkl"
@@ -372,6 +422,53 @@ def main() -> int:
         run(lb_cmd)
         retarget_input_pkl = lower_body_out / "corrected_smpl.pkl"
         require_file(retarget_input_pkl, "lower-body corrected SMPL pkl")
+
+    if args.export_reference_bundle:
+        quality_report = (
+            lower_body_out / "validation_summary.json"
+            if args.optimize_lower_body
+            else world_grounded_out / "quality_report.json"
+        )
+        source_json = reference_bundle_out / "source.json"
+        source_json.parent.mkdir(parents=True, exist_ok=True)
+        source_json.write_text(
+            json.dumps(
+                {
+                    "video": str(video),
+                    "wham_pkl": str(wham_pkl),
+                    "canonical_pkl": str(canonical_pkl),
+                    "world_grounded_pkl": str(world_grounded_out / "optimized_canonical_wham_output.pkl"),
+                    "corrected_smpl_pkl": str(lower_body_out / "corrected_smpl.pkl") if args.optimize_lower_body else None,
+                },
+                indent=2,
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        export_cmd = [
+            sys.executable,
+            "scripts/export_contact_preserving_reference.py",
+            "--input-pkl",
+            str(retarget_input_pkl),
+            "--out-dir",
+            str(reference_bundle_out),
+            "--sequence",
+            sequence,
+            "--fps",
+            str(args.fps),
+            "--track-id",
+            str(args.track_id),
+            "--quality-report",
+            str(quality_report),
+            "--source-json",
+            str(source_json),
+            "--stance-enter-threshold",
+            str(args.stance_enter_threshold),
+            "--stance-exit-threshold",
+            str(args.stance_exit_threshold),
+        ]
+        run(export_cmd)
+        enforce_reference_bundle_quality(reference_bundle_out / "manifest.json", args.quality_tier)
 
     retarget_cmd = [
         sys.executable,
@@ -419,6 +516,9 @@ def main() -> int:
     if args.optimize_lower_body:
         print(f"lower_body_optimized_dir: {lower_body_out}")
         print(f"corrected_smpl_pkl: {retarget_input_pkl}")
+    if args.export_reference_bundle:
+        print(f"reference_bundle_dir: {reference_bundle_out}")
+        print(f"reference_manifest: {reference_bundle_out / 'manifest.json'}")
     print(f"retarget_dir: {retarget_out}")
     if args.skip_ik:
         print("opensim_motion: <not run; --skip-ik>")

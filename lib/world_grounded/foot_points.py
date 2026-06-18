@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Optional
 
 import numpy as np
 
@@ -20,7 +21,7 @@ DEFAULT_FOOT_LABELS = [
 ]
 
 
-def _validate_points(points: np.ndarray, source: str) -> FootPointResult | None:
+def _validate_points(points: np.ndarray, source: str) -> Optional[FootPointResult]:
     points = np.asarray(points, dtype=np.float32)
     if points.ndim != 3 or points.shape[-1] != 3 or points.shape[0] == 0 or points.shape[1] == 0:
         return None
@@ -77,7 +78,7 @@ def _fallback_feet_from_low_vertices(verts: np.ndarray) -> np.ndarray:
     return points
 
 
-def get_record_contact(record: dict, n_frames: int, n_points: int) -> np.ndarray | None:
+def get_record_contact(record: dict, n_frames: int, n_points: int) -> Optional[np.ndarray]:
     if "contact" not in record:
         return None
     contact = np.asarray(record["contact"], dtype=np.float32)

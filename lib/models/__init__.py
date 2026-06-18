@@ -18,6 +18,13 @@ def build_body_model(device, batch_size=1, gender='neutral', **kwargs):
     return body_model
 
 
+def _torch_load_compat(path):
+    try:
+        return torch.load(path, weights_only=False)
+    except TypeError:
+        return torch.load(path)
+
+
 def build_network(cfg, smpl):
     from .wham import Network
     
@@ -29,7 +36,7 @@ def build_network(cfg, smpl):
     
     # Load Checkpoint
     if os.path.isfile(cfg.TRAIN.CHECKPOINT):
-        checkpoint = torch.load(cfg.TRAIN.CHECKPOINT, weights_only=False)
+        checkpoint = _torch_load_compat(cfg.TRAIN.CHECKPOINT)
         ignore_keys = ['smpl.body_pose', 'smpl.betas', 'smpl.global_orient', 'smpl.J_regressor_extra', 'smpl.J_regressor_eval']
         model_state_dict = {k: v for k, v in checkpoint['model'].items() if k not in ignore_keys}
         network.load_state_dict(model_state_dict, strict=False)
