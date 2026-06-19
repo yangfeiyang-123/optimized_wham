@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Optional, Union
 
 import numpy as np
+from scipy.spatial.transform import Rotation
 
 from lib.world_grounded.body_graph import BODY_GRAPH, graph_labels, laplacian_coordinates
 from lib.world_grounded.contact_segments import extract_stance_segments
@@ -28,11 +29,13 @@ def export_reference_bundle(
     stance_exit_threshold: float = 0.30,
     stance_min_frames: int = 4,
     stance_merge_gap: int = 2,
+    root_smooth_axes: tuple[str, ...] = ("y",),
 ) -> Path:
     out_path = Path(out_dir)
     out_path.mkdir(parents=True, exist_ok=True)
 
-    poses = _poses(record)
+    poses_yup = _poses(record)
+    poses = _poses_yup_to_zup(poses_yup)
     n_frames = int(poses.shape[0])
     trans_yup = _fit_2d(record.get("trans_world", record.get("trans", np.zeros((n_frames, 3)))), n_frames, 3)
     betas = _betas(record, n_frames)
@@ -88,6 +91,10 @@ def export_reference_bundle(
 
     motion_payload = {
         "poses": poses.astype(np.float32),
+        "root_orient": poses[:, :3].astype(np.float32),
+        "pose_body": poses[:, 3:].astype(np.float32),
+        "left_hand_pose": _slice_or_zeros(poses, 66, 111).astype(np.float32),
+        "right_hand_pose": _slice_or_zeros(poses, 111, 156).astype(np.float32),
         "trans": _yup_to_zup(trans_yup).astype(np.float32),
         "betas": betas.astype(np.float32),
         "gender": np.asarray(str(record.get("gender", "neutral"))),
@@ -116,13 +123,14 @@ def export_reference_bundle(
     quality = _normalize_quality_report(quality_report or {})
     _write_json(quality_json, quality)
 
+    source_dict = dict(source or {})
     processing = {
         "version": BUNDLE_VERSION,
-        "stages": ["fixed_beta", "world_grounded", "contact_preserving_export"],
+        "stages": _processing_stages(source_dict),
         "parameters": {
             "stance_enter_threshold": float(stance_enter_threshold),
             "stance_exit_threshold": float(stance_exit_threshold),
-            "root_smooth_axes": ["y"],
+            "root_smooth_axes": [str(axis) for axis in root_smooth_axes],
         },
     }
     _write_json(processing_json, processing)
@@ -144,7 +152,7 @@ def export_reference_bundle(
         "quality_report_json": quality_json.name,
         "processing_report_json": processing_json.name,
         "body_keypoints_available": bool(body_payload),
-        "source": dict(source or {}),
+        "source": source_dict,
         "quality": quality,
     }
     _write_json(manifest_json, manifest)
@@ -160,6 +168,16 @@ def _yup_to_zup(points: np.ndarray) -> np.ndarray:
     return out
 
 
+def _poses_yup_to_zup(poses: np.ndarray) -> np.ndarray:
+    arr = np.asarray(poses, dtype=np.float32)
+    if arr.ndim != 2 or arr.shape[1] < 3:
+        return arr.copy()
+    converted = arr.copy()
+    align = Rotation.from_euler("x", 90.0, degrees=True)
+    converted[:, :3] = (align * Rotation.from_rotvec(arr[:, :3])).as_rotvec().astype(np.float32)
+    return converted
+
+
 def _poses(record: dict[str, Any]) -> np.ndarray:
     value = record.get("pose", record.get("pose_world", record.get("poses", np.zeros((0, 72), dtype=np.float32))))
     arr = np.asarray(value, dtype=np.float32)
@@ -173,8 +191,16 @@ def _poses(record: dict[str, Any]) -> np.ndarray:
 def _betas(record: dict[str, Any], n_frames: int) -> np.ndarray:
     arr = np.asarray(record.get("betas", np.zeros((10,), dtype=np.float32)), dtype=np.float32)
     if arr.ndim == 2 and arr.shape[0] == n_frames:
-        return arr[0].copy()
-    return arr.reshape(-1)[:10]
+        flat = arr[0].reshape(-1)
+    elif arr.ndim == 2 and arr.shape[0] > 0:
+        flat = arr[0].reshape(-1)
+    else:
+        flat = arr.reshape(-1)
+    betas = np.zeros((10,), dtype=np.float32)
+    n = min(10, int(flat.size))
+    if n > 0:
+        betas[:n] = flat[:n]
+    return betas
 
 
 def _fit_2d(value: Any, n_frames: int, n_cols: int) -> np.ndarray:
@@ -202,6 +228,17 @@ def _fit_3d(value: Any, n_frames: int, n_points: int, n_cols: int) -> np.ndarray
     if rows < n_frames and rows > 0:
         fitted[rows:] = fitted[rows - 1]
     return fitted
+
+
+def _slice_or_zeros(arr: np.ndarray, start: int, end: int) -> np.ndarray:
+    n_frames = int(arr.shape[0])
+    width = int(end - start)
+    out = np.zeros((n_frames, width), dtype=np.float32)
+    if arr.shape[1] <= start:
+        return out
+    cols = min(width, arr.shape[1] - start)
+    out[:, :cols] = arr[:, start : start + cols]
+    return out
 
 
 def _body_keypoints(record: dict[str, Any], n_frames: int) -> tuple[Optional[np.ndarray], list[str]]:
@@ -232,22 +269,45 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
 
 def _normalize_quality_report(report: dict[str, Any]) -> dict[str, Any]:
     quality = dict(report)
-    if "usable_for_training" in quality and "quality_tier" in quality:
-        return quality
-    if "success" in quality:
-        success = bool(quality.get("success", False))
-        quality.setdefault("usable_for_training", success)
-        quality.setdefault("quality_tier", "B" if success else "D")
-        if not success:
-            quality.setdefault("failed_gates", _failed_validation_checks(quality))
-            quality.setdefault("recommendation", "exclude_from_training")
-        return quality
     if _looks_like_metric_report(quality):
         gated = evaluate_quality_gates(quality)
         return {**quality, **gated}
-    quality.setdefault("usable_for_training", True)
-    quality.setdefault("quality_tier", "B")
-    return quality
+    if "usable_for_training" in quality and "quality_tier" in quality:
+        return quality
+    if "success" in quality:
+        checks = quality.get("checks", {})
+        if isinstance(checks, dict) and checks:
+            success = all(bool(value) for value in checks.values())
+            quality["success"] = success
+        else:
+            success = bool(quality.get("success", False))
+        quality["usable_for_training"] = success
+        quality["quality_tier"] = "B" if success else "D"
+        if not success:
+            quality["failed_gates"] = _failed_validation_checks(quality)
+            quality["recommendation"] = "exclude_from_training"
+        return quality
+    return {
+        **quality,
+        "usable_for_training": False,
+        "quality_tier": "D",
+        "failed_gates": [
+            {
+                "name": "missing_quality_report",
+                "value": False,
+                "threshold": True,
+            }
+        ],
+        "recommendation": "exclude_from_training",
+    }
+
+
+def _processing_stages(source: dict[str, Any]) -> list[str]:
+    stages = ["fixed_beta", "world_grounded"]
+    if source.get("corrected_smpl_pkl"):
+        stages.append("lower_body")
+    stages.append("contact_preserving_export")
+    return stages
 
 
 def _looks_like_metric_report(report: dict[str, Any]) -> bool:

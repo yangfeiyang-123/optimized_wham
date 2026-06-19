@@ -466,6 +466,8 @@ def main() -> int:
             str(args.stance_enter_threshold),
             "--stance-exit-threshold",
             str(args.stance_exit_threshold),
+            "--root-smooth-axes",
+            args.root_smooth_axes,
         ]
         run(export_cmd)
         enforce_reference_bundle_quality(reference_bundle_out / "manifest.json", args.quality_tier)

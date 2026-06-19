@@ -29,6 +29,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--stance-exit-threshold", type=float, default=0.30)
     parser.add_argument("--stance-min-frames", type=int, default=4)
     parser.add_argument("--stance-merge-gap", type=int, default=2)
+    parser.add_argument("--root-smooth-axes", default="y")
     return parser.parse_args()
 
 
@@ -54,6 +55,7 @@ def main() -> int:
         stance_exit_threshold=args.stance_exit_threshold,
         stance_min_frames=args.stance_min_frames,
         stance_merge_gap=args.stance_merge_gap,
+        root_smooth_axes=tuple(axis.strip() for axis in args.root_smooth_axes.split(",") if axis.strip()),
     )
     print(f"reference_manifest: {manifest}")
     return 0
