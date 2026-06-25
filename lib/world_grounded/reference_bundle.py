@@ -92,7 +92,7 @@ def export_reference_bundle(
     motion_payload = {
         "poses": poses.astype(np.float32),
         "root_orient": poses[:, :3].astype(np.float32),
-        "pose_body": poses[:, 3:].astype(np.float32),
+        "pose_body": poses[:, 3:66].astype(np.float32),
         "left_hand_pose": _slice_or_zeros(poses, 66, 111).astype(np.float32),
         "right_hand_pose": _slice_or_zeros(poses, 111, 156).astype(np.float32),
         "trans": _yup_to_zup(trans_yup).astype(np.float32),

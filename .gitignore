@@ -15,3 +15,4 @@ videos/
 # Generated WHAM/optimization outputs. Commit small summaries explicitly with
 # `git add -f` when they are part of an experiment report.
 output/
+BadmintonVideos/
