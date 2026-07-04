@@ -244,6 +244,10 @@ def run(cfg,
         results[_id]['betas'] = pred['betas'].cpu().squeeze(0).numpy()
         results[_id]['verts'] = (pred['verts_cam'] + pred['trans_cam'].unsqueeze(1)).cpu().numpy()
         results[_id]['frame_ids'] = frame_id
+        # Persist the true video frame rate (read from the source video above) so every
+        # downstream step can resolve fps automatically instead of being told by hand.
+        results[_id]['mocap_framerate'] = float(fps)
+        results[_id]['fps'] = float(fps)
         if "contact" in pred:
             results[_id]["contact"] = pred["contact"].detach().cpu().squeeze(0).numpy()
         if "feet_refined" in pred:
@@ -271,6 +275,9 @@ if __name__ == '__main__':
 
     parser.add_argument('--output_pth', type=str, default='output/demo', 
                         help='output folder to write results')
+
+    parser.add_argument('--sequence-name', type=str, default=None,
+                        help='Override output sequence folder name; defaults to the input video stem')
     
     parser.add_argument('--calib', type=str, default=None, 
                         help='Camera calibration file path')
@@ -333,7 +340,7 @@ if __name__ == '__main__':
     network.eval()
     
     # Output folder
-    sequence = '.'.join(args.video.split('/')[-1].split('.')[:-1])
+    sequence = args.sequence_name or '.'.join(args.video.split('/')[-1].split('.')[:-1])
     output_pth = osp.join(args.output_pth, sequence)
     os.makedirs(output_pth, exist_ok=True)
     

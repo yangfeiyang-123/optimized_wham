@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import warnings
 from pathlib import Path
 from typing import Any, Optional, Union
 
@@ -8,7 +9,8 @@ import numpy as np
 from scipy.spatial.transform import Rotation
 
 from lib.world_grounded.body_graph import BODY_GRAPH, graph_labels, laplacian_coordinates
-from lib.world_grounded.contact_segments import extract_stance_segments
+from lib.world_grounded.body_keypoints import body_keypoints_from_verts, load_default_regressors
+from lib.world_grounded.contact_segments import extract_stance_segments, kinematic_stance_gate
 from lib.world_grounded.foot_points import get_record_contact, get_record_foot_points
 from lib.world_grounded.quality_gates import evaluate_quality_gates
 from lib.world_grounded.stance_anchor import anchors_to_jsonable, compute_stance_anchors
@@ -29,6 +31,9 @@ def export_reference_bundle(
     stance_exit_threshold: float = 0.30,
     stance_min_frames: int = 4,
     stance_merge_gap: int = 2,
+    stance_height_threshold: float = 0.05,
+    stance_speed_threshold: float = 0.15,
+    use_kinematic_stance_gate: bool = True,
     root_smooth_axes: tuple[str, ...] = ("y",),
 ) -> Path:
     out_path = Path(out_dir)
@@ -45,7 +50,7 @@ def export_reference_bundle(
     if contact is None:
         contact = np.zeros(foot_points_yup.shape[:2], dtype=np.float32)
     contact = _fit_2d(contact, n_frames, foot_points_yup.shape[1])
-    body_keypoints_yup, body_labels = _body_keypoints(record, n_frames)
+    body_keypoints_yup, body_labels, body_keypoints_source = _body_keypoints(record, n_frames)
     body_payload: dict[str, Any] = {}
     if body_keypoints_yup is not None:
         body_keypoints_zup = _yup_to_zup(body_keypoints_yup.reshape(-1, 3)).reshape(body_keypoints_yup.shape)
@@ -55,7 +60,27 @@ def export_reference_bundle(
             "body_laplacian": laplacian_coordinates(body_keypoints_zup, body_labels).astype(np.float32),
             "body_keypoints_coordinate_system": np.asarray("amass_zup"),
         }
+    else:
+        warnings.warn(
+            f"[export_reference_bundle] sequence '{sequence}': no body keypoints could be "
+            "derived (record has no labelled body_keypoints, no 'verts', and no raw joints). "
+            "body_laplacian is omitted and reward_body_graph will be inert downstream.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
 
+    stance_gate = (
+        kinematic_stance_gate(
+            foot_points_yup,
+            fps=float(fps),
+            ground_y=0.0,
+            height_threshold=float(stance_height_threshold),
+            speed_threshold=float(stance_speed_threshold),
+            vertical_axis=1,
+        )
+        if use_kinematic_stance_gate
+        else None
+    )
     segments, stance_mask = extract_stance_segments(
         contact,
         foot.labels,
@@ -63,6 +88,7 @@ def export_reference_bundle(
         exit_threshold=stance_exit_threshold,
         min_segment_len=stance_min_frames,
         merge_gap=stance_merge_gap,
+        kinematic_gate=stance_gate,
     )
     anchors_yup = compute_stance_anchors(foot_points_yup, contact, segments, ground_y=0.0)
     anchors_zup = [
@@ -152,6 +178,7 @@ def export_reference_bundle(
         "quality_report_json": quality_json.name,
         "processing_report_json": processing_json.name,
         "body_keypoints_available": bool(body_payload),
+        "body_keypoints_source": body_keypoints_source,
         "source": source_dict,
         "quality": quality,
     }
@@ -241,15 +268,46 @@ def _slice_or_zeros(arr: np.ndarray, start: int, end: int) -> np.ndarray:
     return out
 
 
-def _body_keypoints(record: dict[str, Any], n_frames: int) -> tuple[Optional[np.ndarray], list[str]]:
-    for key in ("body_keypoints", "joints_world", "joints"):
+def _body_keypoints(record: dict[str, Any], n_frames: int) -> tuple[Optional[np.ndarray], list[str], str]:
+    """Return world-frame (Y-up) BODY_GRAPH keypoints and their provenance.
+
+    Priority:
+      1. explicit labelled ``body_keypoints`` from the record,
+      2. regress the 21 BODY_GRAPH keypoints from ``verts`` via the shipped
+         J_regressors (the common upstream case: pickles carry ``verts`` but no joints),
+      3. fall back to any raw ``joints_world`` / ``joints`` array,
+      4. otherwise ``(None, [], "missing")``.
+    """
+    # 1. Explicit keypoints take precedence (backward compatible with pre-supplied arrays).
+    if "body_keypoints" in record:
+        arr = np.asarray(record["body_keypoints"], dtype=np.float32)
+        if arr.ndim == 3 and arr.shape[-1] == 3 and arr.shape[0] > 0:
+            labels = _body_keypoint_labels(record, arr.shape[1])
+            return _fit_3d(arr, n_frames, len(labels), 3), labels, "precomputed"
+
+    # 2. Regress BODY_GRAPH keypoints from the SMPL mesh vertices.
+    verts = record.get("verts")
+    if verts is not None:
+        verts_arr = np.asarray(verts, dtype=np.float32)
+        if verts_arr.ndim == 3 and verts_arr.shape[0] > 0 and verts_arr.shape[2] == 3:
+            regressors = load_default_regressors()
+            if regressors is not None:
+                j_h36m, j_feet = regressors
+                if j_h36m.shape[1] == verts_arr.shape[1] and j_feet.shape[1] == verts_arr.shape[1]:
+                    keypoints = body_keypoints_from_verts(verts_arr, j_h36m, j_feet)
+                    labels = graph_labels()
+                    return _fit_3d(keypoints, n_frames, len(labels), 3), labels, "verts_h36m_feet"
+
+    # 3. Fall back to any raw joint array (order unknown; graph labels are a best effort).
+    for key in ("joints_world", "joints"):
         if key not in record:
             continue
         arr = np.asarray(record[key], dtype=np.float32)
         if arr.ndim == 3 and arr.shape[-1] == 3 and arr.shape[0] > 0:
             labels = _body_keypoint_labels(record, arr.shape[1])
-            return _fit_3d(arr, n_frames, len(labels), 3), labels
-    return None, []
+            return _fit_3d(arr, n_frames, len(labels), 3), labels, "raw_joints"
+
+    return None, [], "missing"
 
 
 def _body_keypoint_labels(record: dict[str, Any], n_points: int) -> list[str]:

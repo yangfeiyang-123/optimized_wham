@@ -25,7 +25,7 @@ from lib.smpl_optimization.metrics import (
 from lib.smpl_optimization.reports import build_validation_summary, to_jsonable
 from lib.smpl_optimization.smpl_forward import expand_betas, smpl_forward_axis_angle
 from lib.world_grounded.foot_points import get_record_contact, get_record_foot_points
-from lib.world_grounded.contact_segments import extract_stance_segments
+from lib.world_grounded.contact_segments import extract_stance_segments, kinematic_stance_gate
 from lib.world_grounded.stance_anchor import compute_stance_anchors, rasterize_anchors
 
 
@@ -61,6 +61,19 @@ class LowerBodyOptimizerConfig:
     use_huber: bool = True
     huber_delta: float = 0.03
     max_lower_body_pose_delta: float = 0.7
+    # Kinematic stance gate: a foot may anchor only when it is both near the ground
+    # and moving slowly, so genuine steps/pivots are not pinned to a single spot.
+    use_kinematic_stance_gate: bool = True
+    stance_height_threshold: float = 0.05
+    stance_speed_threshold: float = 0.15
+    # Percentile of the per-frame lowest-foot height used for the deterministic ground
+    # shift. The median (50) aligns the shift to the *typical* lowest foot: on a clip
+    # whose feet already sit on the ground it is ~0 (no-op), while a clip whose whole
+    # baseline sank underground is still lifted. Crucially it is not dragged by the few
+    # deep-penetration or high-flight frames of a jump, which the absolute minimum was —
+    # that lifted every planted frame off the floor. Residual per-frame penetration is
+    # cleaned up locally by the pose pass's penetration_loss.
+    ground_shift_percentile: float = 50.0
 
 
 _SHIFTED_3D_SEQUENCE_KEYS = ("verts", "feet_world", "feet_refined", "feet")
@@ -157,11 +170,37 @@ def lower_body_pose_mask(num_pose_dims: int = 72) -> np.ndarray:
     return mask
 
 
-def _contact_for_feet(record: dict, n_frames: int, n_feet: int) -> np.ndarray:
+def _contact_for_feet(
+    record: dict,
+    n_frames: int,
+    n_feet: int,
+    config: Optional["LowerBodyOptimizerConfig"] = None,
+    foot_points: Optional[np.ndarray] = None,
+) -> np.ndarray:
     contact = get_record_contact(record, n_frames=n_frames, n_points=n_feet)
     if contact is None:
         return np.zeros((n_frames, n_feet), dtype=np.float32)
-    return _fit_contact_shape(contact, n_frames=n_frames, n_points=n_feet)
+    contact = _fit_contact_shape(contact, n_frames=n_frames, n_points=n_feet)
+    # Gate the contact that drives contact_ground_loss / foot_lock in the pose pass by the
+    # low-and-slow kinematic mask. WHAM contact confidence stays non-zero even on airborne
+    # frames (a jump/smash keeps ~0.2-0.5), so an ungated contact_ground_loss pulls the
+    # lifted foot back to the floor and flattens the jump. Gating lets genuine flight
+    # frames drop out while planted frames keep their ground constraint.
+    if (
+        config is not None
+        and getattr(config, "use_kinematic_stance_gate", False)
+        and foot_points is not None
+    ):
+        gate = kinematic_stance_gate(
+            np.asarray(foot_points)[:n_frames],
+            fps=float(config.fps),
+            ground_y=float(config.ground_y),
+            height_threshold=float(config.stance_height_threshold),
+            speed_threshold=float(config.stance_speed_threshold),
+            vertical_axis=1,
+        )
+        contact = contact * _fit_contact_shape(gate.astype(np.float32), n_frames=n_frames, n_points=n_feet)
+    return contact
 
 
 def optimize_lower_body_pose_smpl(
@@ -218,6 +257,11 @@ def optimize_lower_body_pose_smpl(
         n_frames=n_frames,
     )
 
+    # Foot points for the kinematic contact gate (see _contact_for_feet). Computed once
+    # here so genuine flight frames drop out of the ground/lock constraints across chunks.
+    gate_foot_points = _safe_foot_points(record)
+    gate_points_np = gate_foot_points.points if gate_foot_points is not None else None
+
     chunk_size = max(1, int(config.chunk_size))
     for start in range(0, n_frames, chunk_size):
         end = min(start + chunk_size, n_frames)
@@ -235,7 +279,13 @@ def optimize_lower_body_pose_smpl(
             initial = smpl_forward_axis_angle(model, pose_base, betas, trans_base)
             n_feet = int(initial["feet"].shape[1])
 
-        contact_np = _contact_for_feet(record, n_frames=n_frames, n_feet=n_feet)[start:end]
+        contact_np = _contact_for_feet(
+            record,
+            n_frames=n_frames,
+            n_feet=n_feet,
+            config=config,
+            foot_points=gate_points_np,
+        )[start:end]
         contact = torch.tensor(contact_np, dtype=torch.float32, device=device)
         frame_w = torch.tensor(frame_weights_np[start:end, None], dtype=torch.float32, device=device)
         anchor_targets = None
@@ -376,6 +426,13 @@ def _quality_report(record: dict, config: LowerBodyOptimizerConfig) -> dict:
         contact = _fit_contact_shape(contact, n_frames=points.shape[0], n_points=points.shape[1])
         contact_available = True
 
+    # Sliding is only meaningful on genuinely-planted frames. WHAM contact confidence
+    # saturates for near-ground footage, so measuring speed on every high-confidence
+    # frame would flag real steps as "sliding" and reward freezing the feet. Gate the
+    # contact used for the sliding metric by the same low-and-slow kinematics used for
+    # anchoring; penetration/coverage keep the raw confidence.
+    sliding_contact = _gated_contact_for_sliding(points, contact, config)
+
     return {
         "foot_point_source": foot_result.source,
         "foot_point_labels": foot_result.labels,
@@ -385,13 +442,30 @@ def _quality_report(record: dict, config: LowerBodyOptimizerConfig) -> dict:
         "penetration": foot_penetration_depth(points[:, :, 1], ground_y=config.ground_y),
         "sliding": contact_foot_sliding(
             points,
-            contact,
+            sliding_contact,
             fps=config.fps,
             threshold=config.sliding_threshold,
         ),
         "root": root_vertical_jitter(trans_world),
         "beta_variation_max_abs": beta_variation_max_abs(record.get("betas", np.asarray([]))),
     }
+
+
+def _gated_contact_for_sliding(
+    points: np.ndarray, contact: np.ndarray, config: LowerBodyOptimizerConfig
+) -> np.ndarray:
+    """Intersect contact confidence with the low-and-slow kinematic stance gate."""
+    if not config.use_kinematic_stance_gate:
+        return contact
+    gate = kinematic_stance_gate(
+        points,
+        fps=float(config.fps),
+        ground_y=float(config.ground_y),
+        height_threshold=float(config.stance_height_threshold),
+        speed_threshold=float(config.stance_speed_threshold),
+        vertical_axis=1,
+    )
+    return np.asarray(contact, dtype=np.float32) * gate.astype(np.float32)
 
 
 def _compute_frame_y_shift(record: dict, config: LowerBodyOptimizerConfig) -> np.ndarray:
@@ -402,7 +476,21 @@ def _compute_frame_y_shift(record: dict, config: LowerBodyOptimizerConfig) -> np
     if foot_result is None:
         return np.zeros(_frame_count(record), dtype=np.float32)
 
-    min_y = float(np.min(foot_result.points[:, :, 1]))
+    # Ground alignment: shift the whole clip up so the feet's lowest point reaches the
+    # ground. HOW we summarise "lowest point" depends on whether the pose pass runs:
+    #   * Pose pass ON: use a robust percentile (median) of the per-frame lowest foot.
+    #     WHAM's world frame jitters and jump/smash clips mix a few deep-penetration frames
+    #     with genuine flight; the absolute minimum lets one spurious frame lift the whole
+    #     sequence and float every planted frame. Residual per-frame penetration is cleaned
+    #     up locally by the pose pass's penetration_loss.
+    #   * Pose pass OFF: this shift is the ONLY grounding mechanism, so fall back to the
+    #     absolute minimum to guarantee no frame is left penetrating.
+    lowest_per_frame = np.min(foot_result.points[:, :, 1], axis=1)
+    if config.enable_pose_pass:
+        q = float(np.clip(config.ground_shift_percentile, 0.0, 100.0))
+        min_y = float(np.percentile(lowest_per_frame, q))
+    else:
+        min_y = float(np.min(lowest_per_frame))
     target_y = float(config.ground_y) + float(config.foot_clearance)
     required_shift = max(target_y - min_y, 0.0)
     capped_shift = min(required_shift, max(float(config.max_root_y_shift), 0.0))
@@ -553,6 +641,7 @@ def _build_anchor_targets_for_pose_pass(
     if contact is None:
         return None, None, {"stance_anchor_loss_used": False, "stance_anchor_reason": "missing_contact"}
     contact = _fit_contact_shape(contact, n_frames=n_frames, n_points=points.shape[1])
+    gate = _stance_kinematic_gate(points[:n_frames], config)
     segments, stance_mask = extract_stance_segments(
         contact,
         foot_result.labels,
@@ -560,6 +649,7 @@ def _build_anchor_targets_for_pose_pass(
         exit_threshold=config.stance_exit_threshold,
         min_segment_len=config.stance_min_frames,
         merge_gap=config.stance_merge_gap,
+        kinematic_gate=gate,
     )
     anchors = compute_stance_anchors(points[:n_frames], contact, segments, ground_y=config.ground_y)
     targets, anchor_mask = rasterize_anchors(anchors, n_frames=n_frames, n_feet=points.shape[1])
@@ -568,10 +658,25 @@ def _build_anchor_targets_for_pose_pass(
         anchor_mask.astype(np.float32),
         {
             "stance_anchor_loss_used": bool(anchors),
+            "kinematic_stance_gate_used": bool(gate is not None),
             "num_stance_segments": int(len(segments)),
             "num_stance_anchors": int(len(anchors)),
             "stance_coverage_ratio": float(np.mean(stance_mask)) if stance_mask.size else 0.0,
         },
+    )
+
+
+def _stance_kinematic_gate(points: np.ndarray, config: LowerBodyOptimizerConfig) -> Optional[np.ndarray]:
+    """Foot points are Y-up in this stage; gate stance on low-and-slow feet."""
+    if not config.use_kinematic_stance_gate:
+        return None
+    return kinematic_stance_gate(
+        points,
+        fps=float(config.fps),
+        ground_y=float(config.ground_y),
+        height_threshold=float(config.stance_height_threshold),
+        speed_threshold=float(config.stance_speed_threshold),
+        vertical_axis=1,
     )
 
 

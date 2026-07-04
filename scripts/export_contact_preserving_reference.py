@@ -12,6 +12,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+from lib.video_fps import resolve_fps
 from lib.world_grounded.reference_bundle import export_reference_bundle
 from lib.world_grounded.tracks import select_track
 
@@ -21,7 +22,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--input-pkl", required=True)
     parser.add_argument("--out-dir", required=True)
     parser.add_argument("--sequence", required=True)
-    parser.add_argument("--fps", type=float, required=True)
+    parser.add_argument("--fps", type=float, default=None,
+                        help="FPS override; if omitted, read from the input pkl's fps field or probed from --video.")
+    parser.add_argument("--video", type=Path, default=None,
+                        help="Source video to probe fps from when the pkl has no fps field.")
     parser.add_argument("--track-id", default="merge")
     parser.add_argument("--quality-report", default=None)
     parser.add_argument("--source-json", default=None)
@@ -39,6 +43,7 @@ def main() -> int:
     out_dir = Path(args.out_dir).resolve()
     results = joblib.load(input_pkl)
     track_id, record = select_track(results, args.track_id)
+    fps = resolve_fps(args.fps, record=record, video_path=args.video, what=str(input_pkl))
     quality = _read_json(args.quality_report) if args.quality_report else {}
     source = _read_json(args.source_json) if args.source_json else {"input_pkl": str(input_pkl), "track_id": str(track_id)}
     source.setdefault("input_pkl", str(input_pkl))
@@ -48,7 +53,7 @@ def main() -> int:
         record,
         out_dir,
         sequence=args.sequence,
-        fps=args.fps,
+        fps=fps,
         quality_report=quality,
         source=source,
         stance_enter_threshold=args.stance_enter_threshold,

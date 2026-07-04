@@ -119,3 +119,36 @@ def test_optimize_record_marks_opensim_validation_not_run_by_default():
     assert opensim["status"] == "not_run"
     assert opensim["used_for_success"] is False
     assert "opensim_ik_rms_not_worse" not in reports["validation_summary"]["checks"]
+
+
+def test_frame_y_shift_ignores_single_penetration_outlier():
+    """A jump clip: most frames are grounded, a few penetrate, one flies high.
+
+    With the pose pass enabled, the deterministic ground shift keys off the *typical*
+    lowest foot (median), not the single deepest penetration frame - otherwise every
+    planted frame is lifted off the floor. With the pose pass disabled, the shift falls
+    back to the absolute minimum (it is then the only grounding mechanism). Regression
+    for jump/smash footwork being flattened.
+    """
+    from lib.smpl_optimization.lower_body import _compute_frame_y_shift
+
+    n = 40
+    trans = np.zeros((n, 3), dtype=np.float32)
+    feet = np.zeros((n, 2, 3), dtype=np.float32)
+    feet[:, 0, 1] = 0.0  # grounded foot at y=0 for most frames
+    feet[:, 1, 1] = 0.0
+    feet[5, 0, 1] = -0.12  # one spurious deep-penetration frame
+    feet[20:25, :, 1] = 0.16  # a jump: both feet in the air for a few frames
+    record = {"trans_world": trans, "feet_refined": feet, "pose": np.zeros((n, 72), np.float32),
+              "betas": np.zeros((n, 10), np.float32)}
+
+    # Pose pass ON -> robust median -> ~no shift (grounded frames dominate).
+    shift_pose = float(_compute_frame_y_shift(
+        record, LowerBodyOptimizerConfig(fps=60.0, enable_pose_pass=True, ground_shift_percentile=50.0))[0])
+    assert shift_pose <= 0.01
+
+    # Pose pass OFF -> absolute minimum -> lifts the deepest penetration to the floor.
+    shift_nopose = float(_compute_frame_y_shift(
+        record, LowerBodyOptimizerConfig(fps=60.0, enable_pose_pass=False))[0])
+    assert shift_nopose >= 0.11
+
